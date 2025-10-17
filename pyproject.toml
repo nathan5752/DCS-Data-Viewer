@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcs-data-viewer"
+version = "2.1.0"
+description = "A desktop application for visualizing industrial time-series data from PLCs or DCSs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [
+    {name = "DCS Data Viewer Team"}
+]
+keywords = ["visualization", "time-series", "industrial", "plc", "dcs", "pyqt6", "pyqtgraph"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+dependencies = [
+    "PyQt6>=6.9.1",
+    "pyqtgraph>=0.13.7",
+    "pandas>=2.3.3",
+    "tables>=3.10.2",
+    "openpyxl>=3.1.5",
+    "numpy>=2.3.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.0.0",
+    "pytest>=7.0.0",
+    "black>=24.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+dcs-data-viewer = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/dcs-data-viewer"
+Documentation = "https://github.com/yourusername/dcs-data-viewer/blob/main/README.md"
+Repository = "https://github.com/yourusername/dcs-data-viewer"
+Issues = "https://github.com/yourusername/dcs-data-viewer/issues"
+Changelog = "https://github.com/yourusername/dcs-data-viewer/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["data", "plotting", "ui", "ui.widgets", "utils"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
