@@ -24,6 +24,15 @@ class TagList(QListWidget):
         self.tag_descriptions = {}  # Store {tag_name: description}
         self.tag_widgets = {}  # Store {tag_name: TagListItemWidget}
 
+    def clear(self):
+        """
+        Override clear to also clean up tag_widgets and tag_descriptions dictionaries.
+        This prevents RuntimeError when trying to access deleted widgets after reset.
+        """
+        super().clear()  # Clear the QListWidget items
+        self.tag_widgets.clear()  # Clear the widget references
+        self.tag_descriptions.clear()  # Clear descriptions too
+
     def populate_tags(self, tag_names: list, descriptions: dict = None):
         """
         Populate the list with tag names and descriptions.

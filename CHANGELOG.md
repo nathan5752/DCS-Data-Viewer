@@ -5,6 +5,33 @@ All notable changes to DCS Data Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-10-19
+
+### Added
+- Global exception handler that catches uncaught exceptions and logs to `~/.dcs_data_viewer/logs/error.log`
+- User-friendly error dialogs with detailed error information and log file location
+- Comprehensive help guide with 6 sections (Getting Started, Working with Data, Interacting with Plots, Saving & Loading, Data Quality & Export, Troubleshooting)
+- Scrollable help dialog (650x500px) with HTML formatting
+- CSV to Excel converter script (`scripts/csv_to_excel.py`) with argparse CLI
+- Sample CSV data generator (`scripts/generate_sample_csv.py`) for testing
+- Error log directory at `~/.dcs_data_viewer/logs/` for troubleshooting
+
+### Fixed
+- Reset session flow now properly resets viewbox to default zoom/pan state
+- Axis labels reset to defaults ("Value (Primary)", "Time") after session reset
+- Reset session no longer immediately opens file dialog (allows parameter adjustment)
+- Excel parameters now consistently auto-collapse after data load
+- RuntimeError in tag_list.py clear() method that occurred after reset
+- Black background in help dialog - now uses explicit white background styling
+
+### Changed
+- Enhanced error messages for FileNotFoundError with troubleshooting steps (check path, permissions, file location)
+- Enhanced error messages for PermissionError with actionable solutions (close Excel, check read-only, admin rights)
+- Improved error messages for generic errors with diagnostic information
+- CSV converter includes overwrite protection with user confirmation prompt
+- CSV converter supports --force flag to bypass confirmation
+- CSV converter supports --help and --version flags
+
 ## [1.1.0] - 2025-10-19
 
 ### Added

@@ -133,7 +133,6 @@ class MainWindow(QMainWindow):
     def _on_load_new_data(self):
         """Handle Load New Data button click."""
         # Check if data already exists - if so, ask user to confirm reset
-        did_reset = False
         if self.data_manager.has_data():
             reply = QMessageBox.question(
                 self,
@@ -151,7 +150,9 @@ class MainWindow(QMainWindow):
             self.plot_manager.reset()
             self.control_panel.reset_ui()
             self.status_bar.showMessage("Session reset. Ready to load new data.")
-            did_reset = True
+
+            # Return early - let user modify Excel parameters and click Load again
+            return
 
         # Get file path from dialog
         filepath = open_excel_file_dialog(self)
@@ -210,9 +211,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
             self._update_tag_list()
             self.control_panel.enable_data_operations(True)
-            # Auto-collapse Excel File Parameters after first load (but not after reset)
-            if not did_reset:
-                self.control_panel.collapse_params()
+            # Auto-collapse Excel File Parameters after load
+            self.control_panel.collapse_params()
         else:
             show_error_message(self, "Error Loading Data", message)
             self.status_bar.showMessage("Failed to load data")

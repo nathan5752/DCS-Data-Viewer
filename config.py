@@ -4,7 +4,7 @@ Configuration and constants for the DCS Data Viewer application.
 
 # Application metadata
 APP_NAME = "DCS Data Viewer"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 # Default row numbers for Excel parsing
 DEFAULT_TAG_ROW = 1

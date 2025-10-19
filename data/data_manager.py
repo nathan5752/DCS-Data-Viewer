@@ -167,11 +167,29 @@ class DataManager:
             return True, message, df
 
         except FileNotFoundError:
-            return False, f"File not found: {filepath}", None
+            return False, (
+                f"File not found: {filepath}\n\n"
+                f"Please check:\n"
+                f"• File path is correct\n"
+                f"• File has not been moved or deleted\n"
+                f"• You have permission to access this location"
+            ), None
         except PermissionError:
-            return False, f"Permission denied: {filepath}", None
+            return False, (
+                f"Permission denied: {filepath}\n\n"
+                f"Possible solutions:\n"
+                f"• Close the file if it's open in Excel or another program\n"
+                f"• Check the file is not read-only\n"
+                f"• Ensure you have permission to access this location"
+            ), None
         except Exception as e:
-            return False, f"Error loading Excel file: {str(e)}", None
+            return False, (
+                f"Error loading Excel file: {str(e)}\n\n"
+                f"Possible causes:\n"
+                f"• File may be corrupted or in an unsupported format\n"
+                f"• Use 'Check Data Quality' to validate the file first\n"
+                f"• Ensure the file is a valid Excel file (.xlsx or .xls)"
+            ), None
 
     def save_session(self, filepath: str) -> Tuple[bool, str]:
         """
@@ -191,9 +209,22 @@ class DataManager:
             return True, f"Session saved successfully to {filepath}"
 
         except PermissionError:
-            return False, f"Permission denied: {filepath}"
+            return False, (
+                f"Permission denied: {filepath}\n\n"
+                f"Possible solutions:\n"
+                f"• Close the file if it's open in another program\n"
+                f"• Check the file is not read-only\n"
+                f"• Ensure you have write permission to this location\n"
+                f"• Try saving to a different location"
+            )
         except Exception as e:
-            return False, f"Error saving session: {str(e)}"
+            return False, (
+                f"Error saving session: {str(e)}\n\n"
+                f"Possible causes:\n"
+                f"• Insufficient disk space\n"
+                f"• Invalid file path or filename\n"
+                f"• Try saving to a different location"
+            )
 
     def load_session(self, filepath: str) -> Tuple[bool, str, Optional[pd.DataFrame]]:
         """
@@ -216,11 +247,29 @@ class DataManager:
             return True, message, df
 
         except FileNotFoundError:
-            return False, f"File not found: {filepath}", None
+            return False, (
+                f"Session file not found: {filepath}\n\n"
+                f"Please check:\n"
+                f"• File path is correct\n"
+                f"• File has not been moved or deleted\n"
+                f"• You have permission to access this location"
+            ), None
         except PermissionError:
-            return False, f"Permission denied: {filepath}", None
+            return False, (
+                f"Permission denied: {filepath}\n\n"
+                f"Possible solutions:\n"
+                f"• Close the file if it's open in another program\n"
+                f"• Check the file is not read-only\n"
+                f"• Ensure you have permission to access this location"
+            ), None
         except Exception as e:
-            return False, f"Error loading session: {str(e)}", None
+            return False, (
+                f"Error loading session: {str(e)}\n\n"
+                f"Possible causes:\n"
+                f"• File may be corrupted or incompatible\n"
+                f"• Session was created with a different version\n"
+                f"• File is not a valid session file (.h5)"
+            ), None
 
     def append_data(
         self,

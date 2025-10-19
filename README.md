@@ -5,6 +5,7 @@ A desktop application for visualizing time-series data from industrial systems l
 ## Features
 
 - **Excel Data Loading**: Import data with configurable row specifications
+- **CSV Support**: Convert CSV files to Excel format using `scripts/csv_to_excel.py`
 - **HDF5 Session Management**: Save/load sessions for fast access (10-100x faster than Excel)
 - **Multi-Axis Plotting**: Automatic scale detection creates secondary Y-axes when needed
 - **Interactive Tools**: Crosshair, tooltips, line highlighting, pan & zoom
@@ -14,6 +15,8 @@ A desktop application for visualizing time-series data from industrial systems l
 - **Excel Export with Aggregation**: Export plotted data with configurable time aggregation (5s to 1hr intervals, mean/min/max statistics)
 - **PNG Export**: Export plots for reports and documentation
 - **Y-Axis Lock**: Prevent accidental zooming while inspecting data
+- **Error Handling**: Global exception handler with detailed error logging to `~/.dcs_data_viewer/logs/`
+- **Enhanced Error Messages**: Helpful troubleshooting steps for common file errors
 
 ## Installation & Running
 
@@ -44,6 +47,26 @@ Row 4: [timestamp] [value1]  [value2]  [value3] ...
 ```
 
 **Default Settings**: Tag Row=1, Description Row=2, Units Row=3, Data Start=4
+
+## CSV to Excel Converter
+
+Convert CSV files to DCS-compatible Excel format:
+
+```bash
+# Basic usage
+python scripts/csv_to_excel.py input.csv output.xlsx
+
+# Force overwrite without confirmation
+python scripts/csv_to_excel.py input.csv output.xlsx --force
+
+# Show help
+python scripts/csv_to_excel.py --help
+```
+
+The converter assumes:
+- First row contains column headers (tag names)
+- First column contains timestamps
+- Converts to Excel format with proper row structure for DCS Data Viewer
 
 ## Building & Testing
 
@@ -112,4 +135,4 @@ config.py    - All constants and styling
 
 ---
 
-**Version**: 1.1.0 | **License**: Provided as-is for industrial data visualization
+**Version**: 1.2.0 | **License**: Provided as-is for industrial data visualization

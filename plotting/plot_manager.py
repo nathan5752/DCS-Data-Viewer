@@ -972,6 +972,14 @@ class PlotManager(QObject):
         # Reset active plot count
         self.active_plot_count = 0
 
+        # Reset viewbox to default ranges
+        self.plot_item.getViewBox().enableAutoRange()
+        self.plot_item.getViewBox().autoRange()
+
+        # Reset axis labels to defaults
+        self.plot_item.setLabel('left', 'Value (Primary)')
+        self.plot_item.setLabel('bottom', 'Time')
+
     def export_to_png(self, filepath: str) -> tuple[bool, str]:
         """
         Export the current plot to a PNG file with publication-quality settings.
