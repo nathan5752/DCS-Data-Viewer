@@ -83,6 +83,25 @@ def save_png_file_dialog(parent=None) -> Optional[str]:
     return filepath if filepath else None
 
 
+def save_excel_file_dialog(parent=None) -> Optional[str]:
+    """
+    Opens a file dialog to save an Excel file.
+
+    Args:
+        parent: Parent widget for the dialog
+
+    Returns:
+        Selected file path or None if cancelled
+    """
+    filepath, _ = QFileDialog.getSaveFileName(
+        parent,
+        "Export Data to Excel",
+        "",
+        config.EXPORT_EXCEL_FILTER
+    )
+    return filepath if filepath else None
+
+
 def show_error_message(parent, title: str, message: str):
     """
     Displays an error message dialog.

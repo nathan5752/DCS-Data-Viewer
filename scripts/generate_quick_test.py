@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 
 # Generate just 1 hour of data at 10 second intervals (360 points)
 num_points = 360
-start_time = datetime.now() - timedelta(hours=1)
-timestamps = [start_time + timedelta(seconds=i*10) for i in range(num_points)]
+# Use a fixed base time for consistent testing
+base_time = datetime(2025, 1, 1, 12, 0, 0)  # Jan 1, 2025, 12:00:00
+timestamps = [base_time + timedelta(seconds=i*10) for i in range(num_points)]
 
 # Create data dictionary
 data = {"Timestamp": timestamps}

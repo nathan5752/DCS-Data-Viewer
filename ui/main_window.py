@@ -2,20 +2,46 @@
 Main window for the DCS Data Viewer application.
 """
 
-from PyQt6.QtWidgets import QMainWindow, QSplitter, QStatusBar, QWidget, QVBoxLayout, QStackedWidget
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QStatusBar, QWidget, QVBoxLayout, QStackedWidget, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtGui import QIcon
 import pyqtgraph as pg
 
 from ui.widgets.control_panel import ControlPanel
 from ui.widgets.placeholder_widget import PlaceholderWidget
+from ui.widgets.data_quality_dialog import DataQualityDialog
+from ui.widgets.duplicate_warning_dialog import DuplicateWarningDialog
 from data.data_manager import DataManager
+from data.data_validator import DataValidator
 from plotting.plot_manager import PlotManager
 from utils.helpers import (
     open_excel_file_dialog, save_session_file_dialog,
     open_session_file_dialog, save_png_file_dialog,
-    show_error_message, validate_row_numbers, show_blank_column_warning
+    show_error_message, validate_row_numbers, show_blank_column_warning, show_info_message
 )
+from utils.data_cleaner import DataCleaner
 import config
+import os
+import sys
+
+
+def get_resource_path(relative_path):
+    """
+    Get absolute path to resource, works for dev and for PyInstaller.
+
+    Args:
+        relative_path: Path relative to the project root
+
+    Returns:
+        Absolute path to the resource
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # Running as script - use normal path (go up from ui/ to project root)
+        base_path = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(base_path, relative_path)
 
 
 class MainWindow(QMainWindow):
@@ -36,6 +62,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
         self.setGeometry(100, 100, 1400, 800)
 
+        # Set window icon if available
+        icon_path = get_resource_path(os.path.join('assets', 'app_icon.ico'))
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         # Create main central widget with vertical layout
         central_widget = QWidget()
         self.main_layout = QVBoxLayout(central_widget)
@@ -52,6 +83,8 @@ class MainWindow(QMainWindow):
         self.control_panel.load_session_clicked.connect(self._on_load_session)
         self.control_panel.append_data_clicked.connect(self._on_append_data)
         self.control_panel.export_plot_clicked.connect(self._on_export_plot)
+        self.control_panel.export_data_clicked.connect(self._on_export_data)
+        self.control_panel.check_data_quality_clicked.connect(self._on_check_data_quality)
         self.control_panel.tag_check_changed.connect(self._on_tag_check_changed)
         self.control_panel.axis_change_requested.connect(self._on_axis_change_requested)
         splitter.addWidget(self.control_panel)
@@ -99,6 +132,27 @@ class MainWindow(QMainWindow):
 
     def _on_load_new_data(self):
         """Handle Load New Data button click."""
+        # Check if data already exists - if so, ask user to confirm reset
+        did_reset = False
+        if self.data_manager.has_data():
+            reply = QMessageBox.question(
+                self,
+                "Reset Session?",
+                "This will clear the current session and all plotted data.\n\nDo you want to continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+            # Reset the session
+            self.data_manager.reset_session()
+            self.plot_manager.reset()
+            self.control_panel.reset_ui()
+            self.status_bar.showMessage("Session reset. Ready to load new data.")
+            did_reset = True
+
         # Get file path from dialog
         filepath = open_excel_file_dialog(self)
         if not filepath:
@@ -127,6 +181,25 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Load cancelled by user")
                 return
 
+        # Run automatic quick validation
+        self.status_bar.showMessage("Validating data quality...")
+        validator = DataValidator(filepath, tag_row, description_row, units_row, data_start_row)
+        report = validator.run_quick_validation()
+
+        if report.has_issues():
+            # Show validation results and let user decide
+            action = self._show_validation_dialog(report, filepath, tag_row, description_row, units_row, data_start_row)
+
+            if action == DataQualityDialog.ACTION_CANCEL:
+                self.status_bar.showMessage("Load cancelled by user")
+                return
+            elif action == DataQualityDialog.ACTION_CLEAN:
+                # User chose to export cleaned file
+                # The dialog handler already exported the cleaned file
+                self.status_bar.showMessage("Please load the cleaned file when ready")
+                return
+            # If ACTION_CONTINUE, proceed with loading
+
         # Load data
         self.status_bar.showMessage("Loading data...")
         success, message, df = self.data_manager.load_excel(
@@ -137,8 +210,9 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
             self._update_tag_list()
             self.control_panel.enable_data_operations(True)
-            # Auto-collapse Excel File Parameters after first load
-            self.control_panel.collapse_params()
+            # Auto-collapse Excel File Parameters after first load (but not after reset)
+            if not did_reset:
+                self.control_panel.collapse_params()
         else:
             show_error_message(self, "Error Loading Data", message)
             self.status_bar.showMessage("Failed to load data")
@@ -215,13 +289,55 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage("Append cancelled by user")
                 return
 
+        # Run automatic quick validation
+        self.status_bar.showMessage("Validating data quality...")
+        validator = DataValidator(filepath, tag_row, description_row, units_row, data_start_row)
+        report = validator.run_quick_validation()
+
+        if report.has_issues():
+            # Show validation results and let user decide
+            action = self._show_validation_dialog(report, filepath, tag_row, description_row, units_row, data_start_row)
+
+            if action == DataQualityDialog.ACTION_CANCEL:
+                self.status_bar.showMessage("Append cancelled by user")
+                return
+            elif action == DataQualityDialog.ACTION_CLEAN:
+                # User chose to export cleaned file
+                self.status_bar.showMessage("Please append the cleaned file when ready")
+                return
+            # If ACTION_CONTINUE, proceed with appending
+
         # Append data
         self.status_bar.showMessage("Appending data...")
         success, message, df = self.data_manager.append_data(
             filepath, tag_row, description_row, units_row, data_start_row, blank_count
         )
 
-        if success:
+        # Check if duplicates were detected
+        if not success and message == "DUPLICATES_DETECTED":
+            # Show duplicate warning dialog
+            dialog = DuplicateWarningDialog(df, self)  # df contains metadata in this case
+            result = dialog.exec()
+
+            if result == 1:  # QDialog.Accepted (from accept() in dialog)
+                # User confirmed - proceed with append
+                self.status_bar.showMessage("Appending data (confirmed)...")
+                success, message, df = self.data_manager.append_data_confirmed(
+                    filepath, tag_row, description_row, units_row, data_start_row, blank_count
+                )
+
+                if success:
+                    self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
+                    self._update_tag_list()
+                    # Refresh any currently plotted tags
+                    self._refresh_plots()
+                else:
+                    show_error_message(self, "Error Appending Data", message)
+                    self.status_bar.showMessage("Failed to append data")
+            else:
+                # User cancelled
+                self.status_bar.showMessage("Append cancelled by user")
+        elif success:
             self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
             self._update_tag_list()
             # Refresh any currently plotted tags
@@ -250,6 +366,69 @@ class MainWindow(QMainWindow):
         else:
             show_error_message(self, "Error Exporting Plot", message)
             self.status_bar.showMessage("Failed to export plot")
+
+    def _on_export_data(self):
+        """Handle Export Data to Excel button click."""
+        from ui.widgets.export_dialog import ExportDialog
+        from utils.helpers import save_excel_file_dialog
+        from data.export_manager import export_to_excel
+
+        # Check if any tags are plotted
+        plotted_tags = self.plot_manager.get_plotted_tags()
+        if not plotted_tags:
+            show_error_message(self, "No Data to Export",
+                              "No tags are currently plotted. Please plot tags before exporting.")
+            return
+
+        # Get visible time range
+        start_time, end_time = self.plot_manager.get_visible_time_range()
+
+        # Show export dialog
+        dialog = ExportDialog(self, plotted_tags, start_time, end_time)
+        if dialog.exec() != ExportDialog.DialogCode.Accepted:
+            return
+
+        settings = dialog.get_export_settings()
+
+        # Get file path
+        filepath = save_excel_file_dialog(self)
+        if not filepath:
+            return
+        if not filepath.lower().endswith('.xlsx'):
+            filepath += '.xlsx'
+
+        # Get data
+        if settings['time_range'] == 'visible':
+            df = self.data_manager.get_data_for_tags_in_range(
+                plotted_tags, start_time, end_time
+            )
+        else:
+            df = self.data_manager.get_full_data_for_tags(plotted_tags)
+
+        if df is None or df.empty:
+            show_error_message(self, "Export Error", "No data available for export.")
+            return
+
+        # Get tag info
+        tag_info = {
+            'units': {tag: self.data_manager.units.get(tag, '') for tag in plotted_tags}
+        }
+
+        # Export (pass aggregation params)
+        self.status_bar.showMessage("Exporting to Excel...")
+        success, message = export_to_excel(
+            df,
+            filepath,
+            tag_info,
+            interval=settings.get('interval'),
+            stats=settings.get('stats')
+        )
+
+        if success:
+            self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
+        else:
+            show_error_message(self, "Export Error", message)
+            self.status_bar.showMessage("Export failed")
 
     def _on_tag_check_changed(self, tag_name: str, is_checked: bool):
         """
@@ -358,6 +537,73 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(f"Created new stacked plot for {tag_name}", config.STATUS_MESSAGE_TIMEOUT)
 
+    def _show_validation_dialog(self, report, filepath, tag_row, description_row, units_row, data_start_row):
+        """
+        Show validation dialog and handle user action.
+
+        Args:
+            report: ValidationReport with issues found
+            filepath: Path to the Excel file
+            tag_row: Tag row number
+            description_row: Description row number (can be None)
+            units_row: Units row number (can be None)
+            data_start_row: Data start row number
+
+        Returns:
+            User action: ACTION_CONTINUE, ACTION_CLEAN, or ACTION_CANCEL
+        """
+        filename = os.path.basename(filepath)
+        dialog = DataQualityDialog(report, filename, self)
+        dialog.exec()
+
+        action = dialog.get_user_action()
+
+        # If user chose to clean, export cleaned file
+        if action == DataQualityDialog.ACTION_CLEAN:
+            self.status_bar.showMessage("Cleaning data...")
+            cleaner = DataCleaner(filepath, tag_row, description_row, units_row, data_start_row)
+            success, message, output_path = cleaner.clean_and_export()
+
+            if success:
+                show_info_message(self, "Data Cleaned", f"{message}\n\nYou can now load the cleaned file.")
+                self.status_bar.showMessage("Data cleaned successfully", config.STATUS_MESSAGE_TIMEOUT)
+            else:
+                show_error_message(self, "Error Cleaning Data", message)
+                self.status_bar.showMessage("Failed to clean data")
+
+        return action
+
+    def _on_check_data_quality(self):
+        """Handle manual Check Data Quality button click."""
+        # Get file path from dialog
+        filepath = open_excel_file_dialog(self)
+        if not filepath:
+            return
+
+        # Get row numbers from control panel
+        tag_row, description_row, units_row, data_start_row = self.control_panel.get_row_numbers()
+
+        # Validate row numbers
+        is_valid, error_msg = validate_row_numbers(tag_row, description_row, units_row, data_start_row)
+        if not is_valid:
+            show_error_message(self, "Invalid Row Numbers", error_msg)
+            return
+
+        # Run full validation
+        self.status_bar.showMessage("Running comprehensive data quality check...")
+        validator = DataValidator(filepath, tag_row, description_row, units_row, data_start_row)
+        report = validator.run_full_validation()
+
+        # Always show the dialog, even if no issues found
+        if not report.has_issues():
+            # Add a success message to the report
+            report.add_issue("INFO", "Validation", "No data quality issues detected! File looks good.")
+
+        # Show validation results
+        self._show_validation_dialog(report, filepath, tag_row, description_row, units_row, data_start_row)
+
+        self.status_bar.showMessage("Data quality check complete", config.STATUS_MESSAGE_TIMEOUT)
+
     @pyqtSlot()
     def show_plot_widget(self):
         """Switches the view to show the plot widget."""
@@ -367,3 +613,59 @@ class MainWindow(QMainWindow):
     def show_placeholder_widget(self):
         """Switches the view to show the placeholder message."""
         self.plot_stack.setCurrentIndex(0)
+
+    def closeEvent(self, event):
+        """
+        Handle window close event.
+        If data is loaded, ask user if they want to save the session before exiting.
+
+        Args:
+            event: QCloseEvent
+        """
+        # Check if there's data loaded
+        if self.data_manager.has_data():
+            # Create message box with custom buttons
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Save Session Before Exit?")
+            msg_box.setText("You have data loaded. Would you like to save your session before exiting?")
+            msg_box.setIcon(QMessageBox.Icon.Question)
+
+            # Add custom buttons
+            save_button = msg_box.addButton("Save && Exit", QMessageBox.ButtonRole.AcceptRole)
+            exit_button = msg_box.addButton("Exit Without Saving", QMessageBox.ButtonRole.DestructiveRole)
+            cancel_button = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+            # Show dialog and get result
+            msg_box.exec()
+            clicked_button = msg_box.clickedButton()
+
+            if clicked_button == save_button:
+                # Save session before exiting
+                filepath = save_session_file_dialog(self)
+                if filepath:
+                    # Ensure .h5 extension
+                    if not filepath.endswith('.h5'):
+                        filepath += '.h5'
+
+                    # Save session
+                    success, message = self.data_manager.save_session(filepath)
+                    if success:
+                        event.accept()  # Close the window
+                    else:
+                        # Show error and don't close
+                        show_error_message(self, "Error Saving Session", message)
+                        event.ignore()
+                else:
+                    # User cancelled the save dialog, don't close
+                    event.ignore()
+
+            elif clicked_button == exit_button:
+                # Exit without saving
+                event.accept()
+
+            else:  # cancel_button or closed dialog
+                # Cancel close operation
+                event.ignore()
+        else:
+            # No data loaded, just close
+            event.accept()

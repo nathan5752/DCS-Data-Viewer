@@ -23,7 +23,6 @@ test_data.xlsx
 # IDEs
 .vscode/
 .idea/
-.claude/
 *.swp
 *.swo
 *~
@@ -49,5 +48,6 @@ Thumbs.db
 # Archive folder
 archive/
 
-# Project instructions (for AI assistants)
+# Claude Code
+.claude/
 CLAUDE.md

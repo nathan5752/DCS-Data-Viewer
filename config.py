@@ -4,7 +4,7 @@ Configuration and constants for the DCS Data Viewer application.
 
 # Application metadata
 APP_NAME = "DCS Data Viewer"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # Default row numbers for Excel parsing
 DEFAULT_TAG_ROW = 1
@@ -54,6 +54,23 @@ EXPORT_WIDTH_PIXELS = 2400  # ~8 inches at 300 DPI for technical reports
 EXPORT_BACKGROUND_COLOR = 'w'  # White background for technical documentation
 EXPORT_FOREGROUND_COLOR = 'k'  # Black text/axes for print clarity
 EXPORT_FILE_FILTER = "PNG Images (*.png)"
+
+# Excel Export settings
+EXPORT_EXCEL_FILTER = "Excel Files (*.xlsx)"
+
+# Aggregation presets (for Phase 2)
+AGGREGATION_PRESETS = {
+    '5 seconds': '5s',
+    '10 seconds': '10s',
+    '30 seconds': '30s',
+    '1 minute': '1min',
+    '5 minutes': '5min',
+    '15 minutes': '15min',
+    '1 hour': '1h',
+    'Custom...': 'custom'
+}
+
+DEFAULT_AGGREGATION_STATS = ['mean', 'min', 'max']
 
 # Axis toggle button settings
 AXIS_BUTTON_WIDTH = 70
@@ -199,3 +216,13 @@ TOGGLE_BUTTON_DISABLED_STYLE = """
 """
 
 CONTROL_PANEL_SPACING = 15  # Increased spacing between sections
+
+# Data Validation Settings
+VALIDATION_MAX_MISSING_PERCENT = 90  # Warn if column has >90% missing values
+VALIDATION_SAMPLE_ROWS = 1000  # Number of rows to sample for quick validation
+CLEANED_FILE_SUFFIX = "_cleaned"  # Suffix for cleaned Excel files
+
+# Validation severity colors for UI
+SEVERITY_ERROR_COLOR = "#d32f2f"    # Red for errors
+SEVERITY_WARNING_COLOR = "#f57c00"  # Orange for warnings
+SEVERITY_INFO_COLOR = "#1976d2"     # Blue for information

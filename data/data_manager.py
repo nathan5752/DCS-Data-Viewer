@@ -5,6 +5,7 @@ Data management module for loading, saving, and appending time-series data.
 import pandas as pd
 import numpy as np
 from typing import Optional, Tuple
+from tzlocal import get_localzone
 import config
 
 
@@ -141,8 +142,8 @@ class DataManager:
 
             # Parse the first column as timestamps
             first_col = df.columns[0]
-            # FIX: Add format to speed up parsing and resolve the UserWarning
-            df[first_col] = pd.to_datetime(df[first_col], errors='coerce', format='ISO8601')
+            # Let pandas auto-detect the timestamp format for maximum compatibility
+            df[first_col] = pd.to_datetime(df[first_col], errors='coerce')
 
             # Remove rows with invalid timestamps
             initial_count = len(df)
@@ -232,6 +233,92 @@ class DataManager:
     ) -> Tuple[bool, str, Optional[pd.DataFrame]]:
         """
         Append data from a new Excel file to the existing dataframe.
+        Checks for duplicate timestamps and requests user confirmation if found.
+
+        Args:
+            new_filepath: Path to the Excel file to append
+            tag_row: Row number containing tag names (1-indexed)
+            description_row: Row number containing tag descriptions (1-indexed, optional)
+            units_row: Row number containing units (1-indexed, optional)
+            data_start_row: Row number where data starts (1-indexed)
+            skip_blank_columns: Number of blank columns to skip from the left
+
+        Returns:
+            Tuple of (success, message, dataframe)
+            If duplicates detected: (False, "DUPLICATES_DETECTED", metadata_dict)
+        """
+        if self.dataframe is None:
+            return False, "No existing data to append to. Load data first.", None
+
+        # Save the original dataframe BEFORE loading new data
+        # (load_excel modifies self.dataframe as a side effect)
+        original_df = self.dataframe.copy()
+        original_timestamp_column = self.timestamp_column
+
+        # Load the new data using the same method
+        success, message, new_df = self.load_excel(
+            new_filepath, tag_row, description_row, units_row, data_start_row, skip_blank_columns
+        )
+
+        if not success:
+            # Restore original dataframe if load failed
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
+            return False, f"Failed to load new data: {message}", None
+
+        try:
+
+            # Check for duplicate timestamps
+            existing_timestamps = set(original_df[original_timestamp_column])
+            new_timestamps = set(new_df[self.timestamp_column])
+            duplicate_timestamps = existing_timestamps.intersection(new_timestamps)
+
+            if len(duplicate_timestamps) > 0:
+                # Duplicates detected - restore original dataframe and return metadata
+                self.dataframe = original_df
+                self.timestamp_column = original_timestamp_column
+
+                metadata = {
+                    'duplicate_count': len(duplicate_timestamps),
+                    'existing_date_range': (
+                        original_df[original_timestamp_column].min(),
+                        original_df[original_timestamp_column].max()
+                    ),
+                    'new_date_range': (
+                        new_df[self.timestamp_column].min(),
+                        new_df[self.timestamp_column].max()
+                    ),
+                    'new_filepath': new_filepath,
+                    'tag_row': tag_row,
+                    'description_row': description_row,
+                    'units_row': units_row,
+                    'data_start_row': data_start_row,
+                    'skip_blank_columns': skip_blank_columns
+                }
+                return False, "DUPLICATES_DETECTED", metadata
+
+            # No duplicates - restore original dataframe and proceed with append
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
+            return self._perform_append(new_df)
+
+        except Exception as e:
+            # Restore original dataframe on error
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
+            return False, f"Error appending data: {str(e)}", None
+
+    def append_data_confirmed(
+        self,
+        new_filepath: str,
+        tag_row: int,
+        description_row: Optional[int],
+        units_row: Optional[int],
+        data_start_row: int,
+        skip_blank_columns: int = 0
+    ) -> Tuple[bool, str, Optional[pd.DataFrame]]:
+        """
+        Append data without checking for duplicates (user already confirmed).
 
         Args:
             new_filepath: Path to the Excel file to append
@@ -247,43 +334,81 @@ class DataManager:
         if self.dataframe is None:
             return False, "No existing data to append to. Load data first.", None
 
+        # Save the original dataframe BEFORE loading new data
+        original_df = self.dataframe.copy()
+        original_timestamp_column = self.timestamp_column
+
         # Load the new data using the same method
         success, message, new_df = self.load_excel(
             new_filepath, tag_row, description_row, units_row, data_start_row, skip_blank_columns
         )
 
         if not success:
+            # Restore original dataframe if load failed
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
             return False, f"Failed to load new data: {message}", None
 
         try:
-            # Get the original dataframe
-            original_df = self.dataframe
-
-            # Concatenate the dataframes
-            combined_df = pd.concat([original_df, new_df], ignore_index=True)
-
-            # Remove duplicates based on timestamp, keeping the last occurrence
-            initial_count = len(combined_df)
-            combined_df = combined_df.drop_duplicates(
-                subset=[self.timestamp_column],
-                keep='last'
-            )
-            duplicates_removed = initial_count - len(combined_df)
-
-            # Sort by timestamp
-            combined_df = combined_df.sort_values(by=self.timestamp_column)
-            combined_df = combined_df.reset_index(drop=True)
-
-            self.dataframe = combined_df
-
-            message = f"Successfully appended data. Total: {len(combined_df)} rows."
-            if duplicates_removed > 0:
-                message += f" ({duplicates_removed} duplicate timestamps removed.)"
-
-            return True, message, combined_df
-
+            # Restore original dataframe before appending
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
+            return self._perform_append(new_df)
         except Exception as e:
+            # Restore original dataframe on error
+            self.dataframe = original_df
+            self.timestamp_column = original_timestamp_column
             return False, f"Error appending data: {str(e)}", None
+
+    def _perform_append(self, new_df: pd.DataFrame) -> Tuple[bool, str, Optional[pd.DataFrame]]:
+        """
+        Internal method to perform the actual append operation.
+
+        Args:
+            new_df: The new dataframe to append
+
+        Returns:
+            Tuple of (success, message, dataframe)
+        """
+        # Get the original dataframe
+        original_df = self.dataframe
+
+        # Store date range info for message
+        original_min = original_df[self.timestamp_column].min()
+        original_max = original_df[self.timestamp_column].max()
+        new_min = new_df[self.timestamp_column].min()
+        new_max = new_df[self.timestamp_column].max()
+
+        # Concatenate the dataframes
+        combined_df = pd.concat([original_df, new_df], ignore_index=True)
+
+        # Remove duplicates based on timestamp, keeping the last occurrence
+        initial_count = len(combined_df)
+        combined_df = combined_df.drop_duplicates(
+            subset=[self.timestamp_column],
+            keep='last'
+        )
+        duplicates_removed = initial_count - len(combined_df)
+
+        # Sort by timestamp
+        combined_df = combined_df.sort_values(by=self.timestamp_column)
+        combined_df = combined_df.reset_index(drop=True)
+
+        self.dataframe = combined_df
+
+        # Build enhanced message with date range information
+        message = f"Successfully appended data. Total: {len(combined_df)} rows."
+        message += f"\nNew data range: {new_min.strftime('%Y-%m-%d %H:%M:%S')} to {new_max.strftime('%Y-%m-%d %H:%M:%S')}"
+
+        # Check if historical data was added
+        if new_min < original_min:
+            historical_count = len(new_df[new_df[self.timestamp_column] < original_min])
+            message += f"\n({historical_count} rows added before existing data start)"
+
+        if duplicates_removed > 0:
+            message += f"\n({duplicates_removed} duplicate timestamps removed - new data kept)"
+
+        return True, message, combined_df
 
     def get_tag_list(self) -> list:
         """
@@ -338,3 +463,104 @@ class DataManager:
             Description string, or 'N/A' if not found
         """
         return self.descriptions.get(tag_name, 'N/A')
+
+    def get_data_for_tags_in_range(
+        self,
+        tag_names: list,
+        start_time,
+        end_time
+    ) -> Optional[pd.DataFrame]:
+        """
+        Get data for specific tags within time range.
+
+        Args:
+            tag_names: List of tag names to include
+            start_time: Start datetime
+            end_time: End datetime
+
+        Returns:
+            DataFrame with timestamp column + selected tag columns,
+            filtered to time range. Returns None if no data.
+        """
+        if self.dataframe is None or self.dataframe.empty:
+            return None
+
+        # Select columns (timestamp + requested tags)
+        columns = [self.timestamp_column] + [tag for tag in tag_names if tag in self.dataframe.columns]
+        if len(columns) == 1:  # Only timestamp, no valid tags
+            return None
+
+        df_subset = self.dataframe[columns]  # No copy yet
+        timestamp_col = df_subset.columns[0]
+
+        # --- TIMEZONE CONVERSION FIX ---
+        # The plot displays times in local timezone, but DataFrame has naive timestamps
+        # (which are treated as UTC when plotted). We need to convert local→UTC for comparison.
+
+        try:
+            # Get the system's actual local timezone (e.g., 'America/Chicago')
+            local_tz = get_localzone()
+
+            # Convert naive local time from plot to timezone-aware UTC
+            start_ts_utc = pd.Timestamp(start_time).tz_localize(local_tz).tz_convert('UTC')
+            end_ts_utc = pd.Timestamp(end_time).tz_localize(local_tz).tz_convert('UTC')
+
+            # Make a copy and convert DataFrame's naive timestamps to UTC-aware
+            df_utc = df_subset.copy()
+            df_utc[timestamp_col] = df_utc[timestamp_col].dt.tz_localize('UTC')
+
+            # Both sides are now UTC-aware - comparison will work correctly
+            mask = (df_utc[timestamp_col] >= start_ts_utc) & (df_utc[timestamp_col] <= end_ts_utc)
+            df_filtered = df_utc.loc[mask]
+
+            # Convert UTC back to local timezone, THEN strip timezone info
+            if not df_filtered.empty:
+                df_filtered = df_filtered.copy()
+                # KEY FIX: tz_convert() to local first, then tz_localize(None)
+                df_filtered[timestamp_col] = df_filtered[timestamp_col].dt.tz_convert(local_tz).dt.tz_localize(None)
+
+            return df_filtered if not df_filtered.empty else None
+
+        except Exception as e:
+            # Prevent crashes on timezone errors
+            print(f"Error during timezone conversion: {e}")
+            return None
+
+    def get_full_data_for_tags(self, tag_names: list) -> Optional[pd.DataFrame]:
+        """
+        Get full dataset for specific tags (no time filtering).
+
+        Args:
+            tag_names: List of tag names to include
+
+        Returns:
+            DataFrame with timestamp column + selected tag columns.
+            Returns None if no data.
+        """
+        if self.dataframe is None or self.dataframe.empty:
+            return None
+
+        columns = [self.timestamp_column] + [tag for tag in tag_names if tag in self.dataframe.columns]
+        if len(columns) == 1:
+            return None
+
+        return self.dataframe[columns].copy()
+
+    def reset_session(self):
+        """
+        Reset all session data, clearing the dataframe and metadata.
+        This returns the DataManager to its initial state.
+        """
+        self.dataframe = None
+        self.timestamp_column = None
+        self.descriptions = {}
+        self.units = {}
+
+    def has_data(self) -> bool:
+        """
+        Check if data is currently loaded.
+
+        Returns:
+            True if data is loaded, False otherwise
+        """
+        return self.dataframe is not None

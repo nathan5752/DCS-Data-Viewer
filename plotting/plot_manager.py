@@ -5,7 +5,7 @@ Plot management module for handling PyQtGraph plotting with multi-axis support.
 import pyqtgraph as pg
 import pyqtgraph.exporters
 import numpy as np
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from datetime import datetime
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, Qt
 from PyQt6.QtWidgets import QGraphicsItem
@@ -739,6 +739,22 @@ class PlotManager(QObject):
             return None
         return self.plot_items[tag_name]['axis']
 
+    def get_visible_time_range(self) -> Tuple[datetime, datetime]:
+        """
+        Get the currently visible time range from the plot.
+
+        Returns:
+            (start_datetime, end_datetime) tuple
+        """
+        viewbox = self.plot_item.getViewBox()
+        x_range = viewbox.viewRange()[0]  # Returns [x_min, x_max]
+
+        # x_range is in Unix timestamp (seconds since epoch)
+        start_time = datetime.fromtimestamp(x_range[0])
+        end_time = datetime.fromtimestamp(x_range[1])
+
+        return start_time, end_time
+
     def move_plot_to_axis(self, tag_name: str, target_axis: str) -> bool:
         """
         Move a plot from its current axis to a different axis.
@@ -930,6 +946,31 @@ class PlotManager(QObject):
         # Also update right viewbox if it exists
         if self.right_viewbox:
             self.right_viewbox.setMouseEnabled(x=True, y=not is_locked)
+
+    def reset(self):
+        """
+        Reset the PlotManager to its initial state.
+        Clears all plots, groups, and resets axis configurations.
+        """
+        # Clear all plots
+        self.clear_all_plots()
+
+        # Reset group management
+        self.plot_groups = {0: {'plot_item': self.plot_item, 'tags': [], 'mean': None}}
+        self.tag_to_group = {}
+        self.next_group_id = 0
+        self.pending_tags = {}
+
+        # Reset axis state
+        self.left_axis_data_mean = None
+        if self.right_viewbox is not None:
+            self._remove_right_axis()
+
+        # Reset color index
+        self.color_index = 0
+
+        # Reset active plot count
+        self.active_plot_count = 0
 
     def export_to_png(self, filepath: str) -> tuple[bool, str]:
         """

@@ -22,6 +22,8 @@ class ControlPanel(QWidget):
     load_session_clicked = pyqtSignal()
     append_data_clicked = pyqtSignal()
     export_plot_clicked = pyqtSignal()
+    export_data_clicked = pyqtSignal()
+    check_data_quality_clicked = pyqtSignal()
 
     # Signal for tag selection changes
     tag_check_changed = pyqtSignal(str, bool)  # (tag_name, is_checked)
@@ -219,16 +221,34 @@ class ControlPanel(QWidget):
         self.append_data_button.setEnabled(False)  # Disabled until data is loaded
         buttons_layout.addWidget(self.append_data_button, 1, 1)
 
-        # Row 2: Export Plot (spans both columns)
+        # Row 2: Check Data Quality | Export Plot
+        self.check_quality_button = QPushButton(" Check Data Quality")
+        self.check_quality_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogInfoView))
+        self.check_quality_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
+        self.check_quality_button.setMinimumHeight(32)
+        self.check_quality_button.setToolTip("Validate Excel file structure and data quality")
+        self.check_quality_button.clicked.connect(self.check_data_quality_clicked.emit)
+        buttons_layout.addWidget(self.check_quality_button, 2, 0)
+
         self.export_plot_button = QPushButton(" Export Plot as PNG")
         self.export_plot_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogContentsView))
         self.export_plot_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
         self.export_plot_button.setMinimumHeight(32)
         self.export_plot_button.clicked.connect(self.export_plot_clicked.emit)
         self.export_plot_button.setEnabled(False)  # Disabled until data is plotted
-        buttons_layout.addWidget(self.export_plot_button, 2, 0, 1, 2)  # Span 2 columns
+        buttons_layout.addWidget(self.export_plot_button, 2, 1)
 
-        # Row 3: Y-axis lock checkbox (spans both columns)
+        # Row 3: Export Data to Excel (spans both columns)
+        self.export_data_button = QPushButton(" Export Data to Excel")
+        self.export_data_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileIcon))
+        self.export_data_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
+        self.export_data_button.setMinimumHeight(32)
+        self.export_data_button.setToolTip("Export plotted tags to Excel with optional aggregation")
+        self.export_data_button.clicked.connect(self.export_data_clicked.emit)
+        self.export_data_button.setEnabled(False)  # Disabled until data is plotted
+        buttons_layout.addWidget(self.export_data_button, 3, 0, 1, 2)  # Span 2 columns
+
+        # Row 4: Y-axis lock checkbox (spans both columns)
         self.lock_y_axis_checkbox = QCheckBox("Lock Y-Axis (Prevent Zoom)")
         self.lock_y_axis_checkbox.setChecked(False)
         self.lock_y_axis_checkbox.setToolTip("Prevent accidental Y-axis zooming while inspecting data")
@@ -252,7 +272,7 @@ class ControlPanel(QWidget):
         self.lock_y_axis_checkbox.stateChanged.connect(
             lambda state: self.y_axis_lock_changed.emit(state == Qt.CheckState.Checked.value)
         )
-        buttons_layout.addWidget(self.lock_y_axis_checkbox, 3, 0, 1, 2)  # Span 2 columns
+        buttons_layout.addWidget(self.lock_y_axis_checkbox, 4, 0, 1, 2)  # Span 2 columns
 
         buttons_group.setLayout(buttons_layout)
         layout.addWidget(buttons_group)
@@ -381,6 +401,7 @@ class ControlPanel(QWidget):
         self.save_session_button.setEnabled(enabled)
         self.append_data_button.setEnabled(enabled)
         self.export_plot_button.setEnabled(enabled)
+        self.export_data_button.setEnabled(enabled)
 
     def get_checked_tags(self) -> list:
         """
@@ -461,6 +482,31 @@ class ControlPanel(QWidget):
 
             # Store animation to prevent garbage collection
             self._collapse_animation = animation
+
+    def expand_params(self):
+        """
+        Programmatically expand the Excel File Parameters section.
+        Only expands if currently collapsed.
+        """
+        if not self.params_visible:
+            self.params_visible = True
+            self.collapse_button.setText("▼")
+            self.params_widget.setMaximumHeight(16777215)  # Reset to default max height
+            self.params_widget.show()
+
+    def reset_ui(self):
+        """
+        Reset the UI to its initial state.
+        Clears tag list and disables data operation buttons.
+        """
+        # Clear tag list
+        self.tag_list.clear()
+
+        # Disable data operation buttons
+        self.enable_data_operations(False)
+
+        # Expand Excel File Parameters section
+        self.expand_params()
 
     def set_toggle_visible(self, visible: bool):
         """

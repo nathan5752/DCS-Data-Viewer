@@ -10,6 +10,8 @@ A desktop application for visualizing time-series data from industrial systems l
 - **Interactive Tools**: Crosshair, tooltips, line highlighting, pan & zoom
 - **Performance**: Handles 600,000+ data points per tag without lag
 - **Data Appending**: Combine multiple files with automatic duplicate removal
+- **Data Quality Checks**: Duplicate timestamp detection and warnings during data appending
+- **Excel Export with Aggregation**: Export plotted data with configurable time aggregation (5s to 1hr intervals, mean/min/max statistics)
 - **PNG Export**: Export plots for reports and documentation
 - **Y-Axis Lock**: Prevent accidental zooming while inspecting data
 
@@ -110,4 +112,4 @@ config.py    - All constants and styling
 
 ---
 
-**Version**: 1.0.0 | **License**: Provided as-is for industrial data visualization
+**Version**: 1.1.0 | **License**: Provided as-is for industrial data visualization

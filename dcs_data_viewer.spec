@@ -15,7 +15,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/app_icon.ico', 'assets')],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -57,5 +57,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon file path here if you have one
+    icon='assets/app_icon.ico',  # Application icon
 )

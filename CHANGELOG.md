@@ -5,6 +5,29 @@ All notable changes to DCS Data Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-10-19
+
+### Added
+- Data quality checks with duplicate timestamp detection during data appending
+- User warnings for overlapping time ranges when appending data
+- Excel export feature for plotted tags with time range selection (visible range or full dataset)
+- Data aggregation with configurable time intervals (5s, 10s, 30s, 1min, 5min, 15min, 1hr, custom)
+- Multiple aggregation statistics per interval (mean, min, max) with selectable combinations
+- Proper Excel export formatting (bold headers, frozen panes, auto-width columns, units row)
+- Timezone-aware exports that match plot display times (UTC/local conversion)
+- Export dialog with intuitive controls for all export options
+- Performance optimization: Large datasets (100K+ rows) export in 2-10 seconds
+
+### Fixed
+- Timezone conversion issues in Excel exports (local time now matches plot display)
+- Excel file structure formatting (tag names, units, and data rows properly aligned)
+- Timestamp loading constraint that prevented certain Excel date formats from loading
+
+### Changed
+- Export operations use pandas resample for efficient time-series aggregation
+- Aggregated column naming follows pattern: TagName_statistic (e.g., Tag1_mean, Tag1_min, Tag1_max)
+- Units row in exported Excel files properly duplicates units for each aggregated statistic
+
 ## [1.0.0] - 2025-10-17
 
 ### Added
