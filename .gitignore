@@ -51,6 +51,9 @@ archive/
 # Notes folder
 notes/
 
+# Documentation folder
+docs/
+
 # Claude Code
 .claude/
 CLAUDE.md

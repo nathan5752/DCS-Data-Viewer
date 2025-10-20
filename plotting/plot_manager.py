@@ -36,8 +36,11 @@ class DateAxis(pg.AxisItem):
 class PlotManager(QObject):
     """Manages plotting operations with automatic multi-axis support."""
 
-    # Signal for requesting new stacked plot widgets (Phase 3)
-    new_plot_requested = pyqtSignal(str)  # Emits tag_name
+    # Signal for requesting new stacked plot widgets (Phase 3) - DISABLED FOR NOW
+    # new_plot_requested = pyqtSignal(str)  # Emits tag_name (commented out - stacked plots disabled)
+
+    # Signal for max axes reached (2-axis limitation)
+    max_axes_reached = pyqtSignal(str)  # Emits tag_name when unable to add due to axis limit
 
     # Signals for plot visibility (empty plot handling)
     first_plot_added = pyqtSignal()
@@ -55,6 +58,11 @@ class PlotManager(QObject):
         self.right_viewbox: Optional[pg.ViewBox] = None
         self.right_axis: Optional[pg.AxisItem] = None
         self.data_manager = data_manager  # Reference to DataManager for unit lookups
+
+        # Chart customizations
+        self.custom_title: Optional[str] = None
+        self.custom_left_label: Optional[str] = None
+        self.custom_right_label: Optional[str] = None
 
         # Plot group management (Phase 3)
         self.plot_groups: Dict = {}  # {group_id: {'plot_item': PlotItem, 'tags': [], 'mean': float}}
@@ -121,16 +129,20 @@ class PlotManager(QObject):
             elif plot_info['axis'] == 'right':
                 right_units.add(unit)
 
-        # Update left axis label
-        if left_units:
-            left_label = f"Value ({', '.join(sorted(left_units))})"
-        else:
-            left_label = "Value (Primary)"
-        self.plot_item.setLabel('left', left_label)
+        # Update left axis label (only if not custom)
+        if not self.custom_left_label:
+            if left_units:
+                left_label = f"Value ({', '.join(sorted(left_units))})"
+            else:
+                left_label = "Value (Primary)"
+            self.plot_item.setLabel('left', left_label)
 
-        # Update right axis label if it exists
-        if self.right_axis and right_units:
-            right_label = f"Value ({', '.join(sorted(right_units))})"
+        # Update right axis label if it exists (only if not custom)
+        if self.right_axis and not self.custom_right_label:
+            if right_units:
+                right_label = f"Value ({', '.join(sorted(right_units))})"
+            else:
+                right_label = "Value (Secondary)"
             self.right_axis.setLabel(right_label)
 
     def _init_crosshair_for_plot(self, plot_item: pg.PlotItem):
@@ -510,12 +522,13 @@ class PlotManager(QObject):
                     if DEBUG:
                         print(f"[ADD_PLOT] Created Group 1 (right axis) with mean={new_mean:.4f}")
                 else:
-                    # Both axes on main plot are used, need a new stacked plot
+                    # Both axes on main plot are used, cannot add more plots
+                    # Emit signal to notify UI that max axes limit has been reached
                     if DEBUG:
-                        print(f"[ADD_PLOT] Requesting new stacked plot for {tag_name}")
-                    self.pending_tags[tag_name] = (timestamps, values)
-                    self.new_plot_requested.emit(tag_name)
-                    return True  # Will be completed after new plot widget is created
+                        print(f"[ADD_PLOT] Max axes reached, cannot add {tag_name}")
+                    self.max_axes_reached.emit(tag_name)
+                    print(f"Warning: Cannot add '{tag_name}' - maximum of 2 different scales supported.")
+                    return False  # Failed to add plot due to axis limit
 
             # Get target group
             group_info = self.plot_groups[target_group_id]
@@ -692,8 +705,9 @@ class PlotManager(QObject):
             return
 
         try:
-            # FIX: Use plot_item consistently
-            self.plot_item.scene().removeItem(self.right_viewbox)
+            # FIX: Use plot_item consistently and check if viewbox is in scene
+            if self.right_viewbox.scene() is not None:
+                self.plot_item.scene().removeItem(self.right_viewbox)
             self.plot_item.layout.removeItem(self.right_axis)
             self.right_viewbox = None
             self.right_axis = None
@@ -831,8 +845,10 @@ class PlotManager(QObject):
             self.legend.addItem(plot_data_item, tag_name)
         else:
             # For left axis, add to main plot item
+            # Check if item is not already in the PlotItem to avoid warning
+            if plot_data_item not in self.plot_item.listDataItems():
+                self.plot_item.addItem(plot_data_item)
             # Legend entry is created automatically when adding to PlotItem
-            self.plot_item.addItem(plot_data_item)
 
         # Update plot_items dictionary
         plot_info['axis'] = target_axis
@@ -976,9 +992,86 @@ class PlotManager(QObject):
         self.plot_item.getViewBox().enableAutoRange()
         self.plot_item.getViewBox().autoRange()
 
+        # Clear chart customizations
+        self.custom_title = None
+        self.custom_left_label = None
+        self.custom_right_label = None
+
         # Reset axis labels to defaults
         self.plot_item.setLabel('left', 'Value (Primary)')
         self.plot_item.setLabel('bottom', 'Time')
+
+        # Clear chart title
+        self.plot_item.setTitle("")
+
+    def set_chart_customizations(self, title: str, left_label: str, right_label: str):
+        """
+        Apply custom chart title and axis labels.
+
+        Args:
+            title: Custom chart title (empty string to clear)
+            left_label: Custom left Y-axis label (empty string for auto-generated)
+            right_label: Custom right Y-axis label (empty string for auto-generated)
+        """
+        # Store customizations
+        self.custom_title = title if title else None
+        self.custom_left_label = left_label if left_label else None
+        self.custom_right_label = right_label if right_label else None
+
+        # Apply chart title with styling (larger, bold)
+        if self.custom_title:
+            self.plot_item.setTitle(
+                f'<span style="font-size: 16pt; font-weight: bold">{self.custom_title}</span>'
+            )
+        else:
+            self.plot_item.setTitle("")
+
+        # Apply left axis label
+        if self.custom_left_label:
+            self.plot_item.setLabel('left', self.custom_left_label)
+        else:
+            # Revert to auto-generated label
+            self._update_axis_labels()
+
+        # Apply right axis label (if right axis exists)
+        if self.right_axis:
+            if self.custom_right_label:
+                self.right_axis.setLabel(self.custom_right_label)
+            else:
+                # Revert to auto-generated label
+                self._update_axis_labels()
+
+    def get_chart_customizations(self) -> tuple:
+        """
+        Get the current chart customizations.
+
+        Returns:
+            Tuple of (title, left_label, right_label)
+        """
+        return (
+            self.custom_title or "",
+            self.custom_left_label or self._get_current_left_label(),
+            self.custom_right_label or self._get_current_right_label()
+        )
+
+    def _get_current_left_label(self) -> str:
+        """Get the current left axis label."""
+        return self.plot_item.getAxis('left').labelText or "Value (Primary)"
+
+    def _get_current_right_label(self) -> str:
+        """Get the current right axis label."""
+        if self.right_axis:
+            return self.right_axis.labelText or "Value (Secondary)"
+        return "Value (Secondary)"
+
+    def has_right_axis(self) -> bool:
+        """
+        Check if the right axis currently exists.
+
+        Returns:
+            True if right axis exists, False otherwise
+        """
+        return self.right_axis is not None
 
     def export_to_png(self, filepath: str) -> tuple[bool, str]:
         """

@@ -24,6 +24,7 @@ class ControlPanel(QWidget):
     export_plot_clicked = pyqtSignal()
     export_data_clicked = pyqtSignal()
     check_data_quality_clicked = pyqtSignal()
+    customize_chart_clicked = pyqtSignal()
 
     # Signal for tag selection changes
     tag_check_changed = pyqtSignal(str, bool)  # (tag_name, is_checked)
@@ -221,7 +222,7 @@ class ControlPanel(QWidget):
         self.append_data_button.setEnabled(False)  # Disabled until data is loaded
         buttons_layout.addWidget(self.append_data_button, 1, 1)
 
-        # Row 2: Check Data Quality | Export Plot
+        # Row 2: Check Data Quality | Customize Chart
         self.check_quality_button = QPushButton(" Check Data Quality")
         self.check_quality_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogInfoView))
         self.check_quality_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
@@ -230,15 +231,24 @@ class ControlPanel(QWidget):
         self.check_quality_button.clicked.connect(self.check_data_quality_clicked.emit)
         buttons_layout.addWidget(self.check_quality_button, 2, 0)
 
+        self.customize_chart_button = QPushButton(" Customize Chart")
+        self.customize_chart_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogDetailedView))
+        self.customize_chart_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
+        self.customize_chart_button.setMinimumHeight(32)
+        self.customize_chart_button.setToolTip("Customize chart title and axis labels")
+        self.customize_chart_button.clicked.connect(self.customize_chart_clicked.emit)
+        self.customize_chart_button.setEnabled(False)  # Disabled until data is plotted
+        buttons_layout.addWidget(self.customize_chart_button, 2, 1)
+
+        # Row 3: Export Plot as PNG | Export Data to Excel
         self.export_plot_button = QPushButton(" Export Plot as PNG")
         self.export_plot_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogContentsView))
         self.export_plot_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
         self.export_plot_button.setMinimumHeight(32)
         self.export_plot_button.clicked.connect(self.export_plot_clicked.emit)
         self.export_plot_button.setEnabled(False)  # Disabled until data is plotted
-        buttons_layout.addWidget(self.export_plot_button, 2, 1)
+        buttons_layout.addWidget(self.export_plot_button, 3, 0)
 
-        # Row 3: Export Data to Excel (spans both columns)
         self.export_data_button = QPushButton(" Export Data to Excel")
         self.export_data_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileIcon))
         self.export_data_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
@@ -246,7 +256,7 @@ class ControlPanel(QWidget):
         self.export_data_button.setToolTip("Export plotted tags to Excel with optional aggregation")
         self.export_data_button.clicked.connect(self.export_data_clicked.emit)
         self.export_data_button.setEnabled(False)  # Disabled until data is plotted
-        buttons_layout.addWidget(self.export_data_button, 3, 0, 1, 2)  # Span 2 columns
+        buttons_layout.addWidget(self.export_data_button, 3, 1)
 
         # Row 4: Y-axis lock checkbox (spans both columns)
         self.lock_y_axis_checkbox = QCheckBox("Lock Y-Axis (Prevent Zoom)")
@@ -402,6 +412,7 @@ class ControlPanel(QWidget):
         self.append_data_button.setEnabled(enabled)
         self.export_plot_button.setEnabled(enabled)
         self.export_data_button.setEnabled(enabled)
+        self.customize_chart_button.setEnabled(enabled)
 
     def get_checked_tags(self) -> list:
         """
@@ -494,6 +505,36 @@ class ControlPanel(QWidget):
             self.params_widget.setMaximumHeight(16777215)  # Reset to default max height
             self.params_widget.show()
 
+    def set_params_enabled(self, enabled: bool):
+        """
+        Enable or disable the Excel File Parameters section.
+        When disabled, all controls are grayed out and non-interactive.
+
+        Args:
+            enabled: True to enable, False to disable
+        """
+        # Enable/disable all spinboxes
+        self.tag_row_spin.setEnabled(enabled)
+        self.description_row_spin.setEnabled(enabled and self.description_row_enabled)
+        self.units_row_spin.setEnabled(enabled and self.units_row_enabled)
+        self.data_start_row_spin.setEnabled(enabled)
+
+        # Enable/disable toggle buttons
+        self.description_row_button.setEnabled(enabled)
+        self.units_row_button.setEnabled(enabled)
+
+        # Keep collapse button enabled so users can expand/collapse to view parameters
+        # (they just can't edit them when disabled)
+
+        # Update tooltip to explain why it's disabled
+        if not enabled:
+            self.params_widget.setToolTip(
+                "Excel parameters are locked after loading data.\n"
+                "Click 'Load New Data' and confirm reset to change parameters."
+            )
+        else:
+            self.params_widget.setToolTip("")
+
     def reset_ui(self):
         """
         Reset the UI to its initial state.
@@ -505,8 +546,9 @@ class ControlPanel(QWidget):
         # Disable data operation buttons
         self.enable_data_operations(False)
 
-        # Expand Excel File Parameters section
+        # Expand and re-enable Excel File Parameters section
         self.expand_params()
+        self.set_params_enabled(True)
 
     def set_toggle_visible(self, visible: bool):
         """

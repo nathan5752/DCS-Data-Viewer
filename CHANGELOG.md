@@ -5,6 +5,20 @@ All notable changes to DCS Data Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-10-20
+
+### Fixed
+- Excel parameter spinbox buttons that were only partially functional
+- Excel parameters can no longer be modified after data is loaded, preventing user confusion
+- Parameters are automatically disabled (grayed out) and collapsed after loading data or sessions
+
+### Changed
+- Removed up/down arrow buttons from all spinbox inputs for cleaner UX
+- Users now type row numbers directly instead of using increment/decrement buttons
+- Excel parameters section can still be expanded/collapsed when disabled to view current settings
+- Added helpful tooltip explaining that parameters are locked after loading and how to re-enable them
+- Parameters automatically re-enable when user clicks "Load New Data" and confirms session reset
+
 ## [1.2.0] - 2025-10-19
 
 ### Added

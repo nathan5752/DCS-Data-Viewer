@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         self.control_panel.export_plot_clicked.connect(self._on_export_plot)
         self.control_panel.export_data_clicked.connect(self._on_export_data)
         self.control_panel.check_data_quality_clicked.connect(self._on_check_data_quality)
+        self.control_panel.customize_chart_clicked.connect(self._on_customize_chart)
         self.control_panel.tag_check_changed.connect(self._on_tag_check_changed)
         self.control_panel.axis_change_requested.connect(self._on_axis_change_requested)
         splitter.addWidget(self.control_panel)
@@ -112,8 +113,11 @@ class MainWindow(QMainWindow):
         # Create PlotManager with main plot widget
         self.plot_manager = PlotManager(self.main_plot_widget, self.data_manager)
 
-        # Connect signal for creating additional stacked plots
-        self.plot_manager.new_plot_requested.connect(self._create_new_plot_widget)
+        # Connect signal for creating additional stacked plots (DISABLED - stacked plots not implemented)
+        # self.plot_manager.new_plot_requested.connect(self._create_new_plot_widget)
+
+        # Connect signal for max axes reached notification
+        self.plot_manager.max_axes_reached.connect(self._on_max_axes_reached)
 
         # Connect Y-axis lock signal from control panel to plot manager
         self.control_panel.y_axis_lock_changed.connect(self.plot_manager.set_y_axis_lock)
@@ -151,6 +155,7 @@ class MainWindow(QMainWindow):
             self.control_panel.reset_ui()
             self.status_bar.showMessage("Session reset. Ready to load new data.")
 
+            # Parameters are re-enabled by reset_ui()
             # Return early - let user modify Excel parameters and click Load again
             return
 
@@ -211,8 +216,9 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
             self._update_tag_list()
             self.control_panel.enable_data_operations(True)
-            # Auto-collapse Excel File Parameters after load
+            # Auto-collapse and disable Excel File Parameters after load
             self.control_panel.collapse_params()
+            self.control_panel.set_params_enabled(False)
         else:
             show_error_message(self, "Error Loading Data", message)
             self.status_bar.showMessage("Failed to load data")
@@ -253,8 +259,9 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(message, config.STATUS_MESSAGE_TIMEOUT)
             self._update_tag_list()
             self.control_panel.enable_data_operations(True)
-            # Auto-collapse Excel File Parameters after loading session
+            # Auto-collapse and disable Excel File Parameters after loading session
             self.control_panel.collapse_params()
+            self.control_panel.set_params_enabled(False)
         else:
             show_error_message(self, "Error Loading Session", message)
             self.status_bar.showMessage("Failed to load session")
@@ -367,6 +374,31 @@ class MainWindow(QMainWindow):
             show_error_message(self, "Error Exporting Plot", message)
             self.status_bar.showMessage("Failed to export plot")
 
+    def _on_customize_chart(self):
+        """Handle Customize Chart button click."""
+        from ui.widgets.customize_chart_dialog import CustomizeChartDialog
+
+        # Get current customizations from plot manager
+        current_title, current_left, current_right = self.plot_manager.get_chart_customizations()
+
+        # Check if right axis exists
+        has_right_axis = self.plot_manager.has_right_axis()
+
+        # Show customization dialog
+        dialog = CustomizeChartDialog(
+            self,
+            current_title=current_title,
+            current_left_label=current_left,
+            current_right_label=current_right,
+            has_right_axis=has_right_axis
+        )
+
+        if dialog.exec() == CustomizeChartDialog.DialogCode.Accepted:
+            # Apply customizations
+            title, left_label, right_label = dialog.get_customizations()
+            self.plot_manager.set_chart_customizations(title, left_label, right_label)
+            self.status_bar.showMessage("Chart customizations applied", config.STATUS_MESSAGE_TIMEOUT)
+
     def _on_export_data(self):
         """Handle Export Data to Excel button click."""
         from ui.widgets.export_dialog import ExportDialog
@@ -473,6 +505,36 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Moved {tag_name} to {axis_name} axis", config.STATUS_MESSAGE_TIMEOUT)
         else:
             self.status_bar.showMessage(f"Failed to move {tag_name} to {target_axis} axis")
+
+    def _on_max_axes_reached(self, tag_name: str):
+        """
+        Handle max axes reached notification from PlotManager.
+
+        Shows a user-friendly message explaining the 2-axis limitation
+        and suggesting solutions.
+
+        Args:
+            tag_name: Name of the tag that couldn't be added
+        """
+        # Uncheck the tag in the UI since it couldn't be plotted
+        self.control_panel.tag_list_widget.set_tag_checked(tag_name, False)
+
+        # Show informative message dialog
+        QMessageBox.warning(
+            self,
+            "Maximum Axes Reached",
+            f"Cannot plot '{tag_name}' - this tag requires a third independent scale.\n\n"
+            f"Currently, only 2 different scales are supported (Primary and Secondary axes).\n\n"
+            f"To plot this tag, you can:\n"
+            f"  • Uncheck other tags with different scales\n"
+            f"  • Right-click a plotted tag and use 'Move to Left/Right Axis' to reassign axes\n\n"
+            f"Note: Multiple Y-axis support (3+ scales) is planned for a future release."
+        )
+
+        self.status_bar.showMessage(
+            f"Cannot add '{tag_name}' - maximum of 2 scales supported",
+            config.STATUS_MESSAGE_TIMEOUT
+        )
 
     def _update_tag_list(self):
         """Update the tag list with available tags from data manager."""

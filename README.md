@@ -135,4 +135,4 @@ config.py    - All constants and styling
 
 ---
 
-**Version**: 1.2.0 | **License**: Provided as-is for industrial data visualization
+**Version**: 1.3.0 | **License**: Provided as-is for industrial data visualization

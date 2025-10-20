@@ -4,7 +4,7 @@ Configuration and constants for the DCS Data Viewer application.
 
 # Application metadata
 APP_NAME = "DCS Data Viewer"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 # Default row numbers for Excel parsing
 DEFAULT_TAG_ROW = 1
@@ -41,6 +41,11 @@ AXIS_MAGNITUDE_THRESHOLD = 1.5
 PLOT_LINE_WIDTH = 2
 DOWNSAMPLE_MODE = 'peak'  # Keep peaks visible when downsampling
 PLOT_BACKGROUND_COLOR = 'w'  # White background for better contrast
+
+# Chart customization defaults
+DEFAULT_CHART_TITLE = ""
+DEFAULT_LEFT_AXIS_LABEL = "Value (Primary)"
+DEFAULT_RIGHT_AXIS_LABEL = "Value (Secondary)"
 
 # UI Layout
 CONTROL_PANEL_MIN_WIDTH = 250
@@ -160,6 +165,10 @@ CONTROL_PANEL_SPINBOX_STYLE = """
     }
     QSpinBox:focus {
         border-color: #1f77b4;
+    }
+    QSpinBox::up-button, QSpinBox::down-button {
+        width: 0px;
+        height: 0px;
     }
 """
 CONTROL_PANEL_LINEEDIT_STYLE = """
