@@ -187,3 +187,14 @@ class TagList(QListWidget):
                 display_text = tag_name
 
             widget.update_display_text(display_text)
+
+    def set_axis_buttons_enabled(self, enabled: bool):
+        """
+        Enable or disable all axis buttons.
+        Used to disable axis changing when in compare mode.
+
+        Args:
+            enabled: True to enable all buttons, False to disable
+        """
+        for tag_name, widget in self.tag_widgets.items():
+            widget.set_axis_button_enabled(enabled)

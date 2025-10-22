@@ -63,6 +63,7 @@ class HelpDialog(QDialog):
         self._add_section_4(content_layout)
         self._add_section_5(content_layout)
         self._add_section_6(content_layout)
+        self._add_section_7(content_layout)
 
         content_layout.addStretch()
         content_widget.setLayout(content_layout)
@@ -249,6 +250,57 @@ class HelpDialog(QDialog):
         </p>
         <p style="margin-left: 15px;">
         This converts CSV files into the Excel format required by DCS Data Viewer.
+        </p>
+        """
+        layout.addWidget(self._create_content_label(content))
+
+    def _add_section_7(self, layout):
+        """Section 7: Compare Mode (Normalize 0-100%)"""
+        layout.addWidget(self._create_section_header("7. Compare Mode (Normalize 0-100%)"))
+
+        content = """
+        <p><b>What is Compare Mode?</b> Normalizes all visible tags to a shared 0-100% scale, making it easy to
+        compare relative trends of signals with very different units or magnitudes (e.g., temperature in °C vs.
+        pressure in bar).</p>
+
+        <p><b>Normalization Methods:</b></p>
+        <p style="margin-left: 15px;">
+        • <b>Robust Min-Max (p5-p95):</b> Uses 5th and 95th percentiles to reduce outlier impact (recommended)<br>
+        • <b>Min-Max:</b> Classic min/max scaling using absolute min and max values
+        </p>
+
+        <p><b>Scope Options:</b></p>
+        <p style="margin-left: 15px;">
+        • <b>Entire series:</b> Stable normalization using full dataset<br>
+        • <b>Visible window:</b> Dynamic normalization based on zoomed view
+        </p>
+
+        <p><b>Using Compare Mode:</b></p>
+        <p style="margin-left: 15px;">
+        1. Plot the tags you want to compare<br>
+        2. Enable Compare Mode checkbox<br>
+        3. Select method and scope<br>
+        4. All tags now show on same 0-100% scale<br>
+        5. Keyboard shortcut: <b>Ctrl+Shift+C</b>
+        </p>
+
+        <p><b>Tooltip Display Modes:</b></p>
+        <p style="margin-left: 15px;">
+        • <b>Compact (default):</b> Clean display showing value and percentage<br>
+        &nbsp;&nbsp;Example: "Tag: 42.1 A • 78%"<br>
+        • <b>Detailed:</b> Shows normalization reference ranges<br>
+        &nbsp;&nbsp;Example: "Tag: 42.1 A • 78% (series robust p5–p95: 10.2–63.7 A)"<br>
+        • <b>Toggle:</b> Press <b>T</b> to switch between Compact and Detailed<br>
+        • <b>Quick View:</b> Hold <b>Alt</b> to temporarily view Detailed mode
+        </p>
+
+        <p><b>Important Notes:</b></p>
+        <p style="margin-left: 15px;">
+        • Export Data to Excel always exports <b>original values</b> (not normalized)<br>
+        • Export Plot as PNG exports the normalized view you see<br>
+        • Loading new data automatically exits Compare Mode<br>
+        • Y-axis is locked to 0-100% (cannot zoom)<br>
+        • Axis assignment buttons are disabled (all use same scale)
         </p>
         """
         layout.addWidget(self._create_content_label(content))

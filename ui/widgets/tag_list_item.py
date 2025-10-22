@@ -126,3 +126,17 @@ class TagListItemWidget(QWidget):
         """Update the display text (for toggling between tag name and description)."""
         self.display_text = display_text
         self.label.setText(display_text)
+
+    def set_axis_button_enabled(self, enabled: bool):
+        """
+        Enable or disable the axis button.
+        Used to disable axis changing when in compare mode.
+
+        Args:
+            enabled: True to enable button, False to disable
+        """
+        self.axis_button.setEnabled(enabled)
+        if not enabled:
+            self.axis_button.setToolTip("Axis assignment locked in Compare Mode")
+        else:
+            self.axis_button.setToolTip("")

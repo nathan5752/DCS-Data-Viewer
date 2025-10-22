@@ -4,7 +4,7 @@ Main window for the DCS Data Viewer application.
 
 from PyQt6.QtWidgets import QMainWindow, QSplitter, QStatusBar, QWidget, QVBoxLayout, QStackedWidget, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QShortcut, QKeySequence
 import pyqtgraph as pg
 
 from ui.widgets.control_panel import ControlPanel
@@ -122,6 +122,28 @@ class MainWindow(QMainWindow):
         # Connect Y-axis lock signal from control panel to plot manager
         self.control_panel.y_axis_lock_changed.connect(self.plot_manager.set_y_axis_lock)
 
+        # Connect Compare Mode signals from control panel to plot manager
+        self.control_panel.compare_mode_changed.connect(self._on_compare_mode_changed)
+        self.control_panel.compare_method_changed.connect(self._on_compare_method_changed)
+        self.control_panel.compare_scope_changed.connect(self._on_compare_scope_changed)
+
+        # Connect PlotManager's compare mode UI update signal (for internal state changes)
+        self.plot_manager.compare_mode_ui_update_requested.connect(
+            lambda enabled: self.control_panel.tag_list.set_axis_buttons_enabled(not enabled)
+        )
+
+        # Connect Tooltip Mode signal
+        self.control_panel.tooltip_mode_changed.connect(self.plot_manager.set_tooltip_mode)
+
+        # Add keyboard shortcut for Compare Mode (Ctrl+Shift+C)
+        compare_shortcut = QShortcut(QKeySequence("Ctrl+Shift+C"), self)
+        compare_shortcut.activated.connect(self._toggle_compare_mode)
+
+        # Add keyboard shortcut for Tooltip mode toggle (T)
+        tooltip_shortcut = QShortcut(QKeySequence("T"), self)
+        tooltip_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)  # Use ApplicationShortcut for reliability
+        tooltip_shortcut.activated.connect(self._toggle_tooltip_mode)
+
         # Connect plot visibility signals
         self.plot_manager.first_plot_added.connect(self.show_plot_widget)
         self.plot_manager.all_plots_removed.connect(self.show_placeholder_widget)
@@ -148,6 +170,11 @@ class MainWindow(QMainWindow):
 
             if reply == QMessageBox.StandardButton.No:
                 return
+
+            # Auto-exit compare mode if enabled
+            if self.plot_manager.compare_mode_enabled:
+                self.control_panel.compare_mode_checkbox.setChecked(False)
+                self.status_bar.showMessage("Compare Mode disabled due to new data load", config.STATUS_MESSAGE_TIMEOUT)
 
             # Reset the session
             self.data_manager.reset_session()
@@ -349,6 +376,11 @@ class MainWindow(QMainWindow):
             self._update_tag_list()
             # Refresh any currently plotted tags
             self._refresh_plots()
+
+            # If in compare mode with entire_series scope, recalculate stats
+            if self.plot_manager.compare_mode_enabled and self.plot_manager.compare_scope == 'entire_series':
+                self.plot_manager._recalculate_all_stats_and_redraw()
+                self.status_bar.showMessage("Plots refreshed and normalization updated", config.STATUS_MESSAGE_TIMEOUT)
         else:
             show_error_message(self, "Error Appending Data", message)
             self.status_bar.showMessage("Failed to append data")
@@ -675,6 +707,64 @@ class MainWindow(QMainWindow):
     def show_placeholder_widget(self):
         """Switches the view to show the placeholder message."""
         self.plot_stack.setCurrentIndex(0)
+
+    def _on_compare_mode_changed(self, enabled: bool):
+        """
+        Handle compare mode toggle from control panel.
+
+        Args:
+            enabled: True if compare mode is being enabled
+        """
+        # Guard: Don't enable compare mode if no data is loaded
+        if enabled and self.data_manager.dataframe is None:
+            self.status_bar.showMessage("Load data before enabling Compare Mode", config.STATUS_MESSAGE_TIMEOUT)
+            # Revert checkbox without re-entering this signal handler
+            self.control_panel.compare_mode_checkbox.blockSignals(True)
+            self.control_panel.compare_mode_checkbox.setChecked(False)
+            self.control_panel.compare_mode_checkbox.blockSignals(False)
+            return
+
+        self.plot_manager.set_compare_mode(enabled)
+        status = self.plot_manager.get_compare_mode_status()
+        self.status_bar.showMessage(status, config.STATUS_MESSAGE_TIMEOUT)
+
+        # Disable/enable axis buttons in tag list
+        self.control_panel.tag_list.set_axis_buttons_enabled(not enabled)
+
+    def _on_compare_method_changed(self, method: str):
+        """
+        Handle compare method change from control panel.
+
+        Args:
+            method: The new method ('robust_minmax' or 'minmax')
+        """
+        self.plot_manager.set_compare_method(method)
+        status = self.plot_manager.get_compare_mode_status()
+        self.status_bar.showMessage(f"Compare method changed: {status}", config.STATUS_MESSAGE_TIMEOUT)
+
+    def _on_compare_scope_changed(self, scope: str):
+        """
+        Handle compare scope change from control panel.
+
+        Args:
+            scope: The new scope ('entire_series' or 'visible_window')
+        """
+        self.plot_manager.set_compare_scope(scope)
+        status = self.plot_manager.get_compare_mode_status()
+        self.status_bar.showMessage(f"Compare scope changed: {status}", config.STATUS_MESSAGE_TIMEOUT)
+
+    def _toggle_compare_mode(self):
+        """Toggle compare mode via keyboard shortcut (Ctrl+Shift+C)."""
+        current = self.control_panel.compare_mode_checkbox.isChecked()
+        self.control_panel.compare_mode_checkbox.setChecked(not current)
+
+    def _toggle_tooltip_mode(self):
+        """Toggle between compact and detailed tooltip modes via keyboard shortcut (T)."""
+        current = self.control_panel.get_tooltip_mode()
+        new_mode = "detailed" if current == "compact" else "compact"
+        self.control_panel.set_tooltip_mode(new_mode)
+        self.plot_manager.set_tooltip_mode(new_mode)
+        self.status_bar.showMessage(f"Tooltip mode: {new_mode.capitalize()}", 2000)
 
     def closeEvent(self, event):
         """

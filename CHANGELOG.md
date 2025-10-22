@@ -5,6 +5,43 @@ All notable changes to DCS Data Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2025-10-22
+
+### Added
+- **Compare Mode** feature for normalizing all visible tags to 0-100% scale, enabling easy comparison of relative trends between signals with very different units or magnitudes
+- Two normalization methods: **Robust Min-Max (p5-p95)** (reduces outlier impact) and **Min-Max** (classic normalization)
+- Two scope options: **Entire series** (stable normalization using full dataset) and **Visible window** (dynamic normalization based on current zoom level)
+- Tooltip display modes: **Compact** (default, clean display) and **Detailed** (shows normalization reference ranges)
+- Keyboard shortcuts: **Ctrl+Shift+C** to toggle Compare Mode, **T** to toggle tooltip mode
+- **Alt key override** for temporarily viewing detailed tooltip mode
+- Automatic axis button management: buttons disabled in Compare Mode to prevent multi-axis conflicts
+- Automatic right axis hiding when entering Compare Mode, with restoration on exit
+- Compare Mode status label showing current method and scope settings
+- Throttled recalculation (150ms) for smooth performance with visible window scope
+- Flat series detection: series with span < 1e-10 render at 50% with "(flat)" indicator
+- Y-proximity sorting in tooltips: series nearest to cursor appear first
+- Tooltip line limiting: max 6 lines with "+N more" overflow indicator
+- HTML-escaped tag names in tooltips for safety
+
+### Changed
+- Enhanced tooltips with normalized percentage display in Compare Mode (e.g., "Tag: 42.1 A • 78%")
+- Detailed tooltip mode shows normalization reference ranges (e.g., "series robust p5–p95: 10.2–63.7 A")
+- Y-axis lock checkbox automatically disabled and locked to 0-100% range when Compare Mode is active
+- Export Plot tooltip clarified: "Exports normalized view if Compare Mode is active"
+- Export Data tooltip clarified: "Export plotted tags to Excel with optional aggregation (Exports original values - Compare Mode does not affect data)"
+- Help guide expanded with Section 7: Compare Mode documentation covering methods, scopes, usage, and important notes
+- Tooltip formatting improved: 3 significant figures, no trailing zeros, clean number display
+
+### Fixed
+- Compare Mode automatically exits when loading new data to prevent state confusion
+- Normalization statistics recalculate when appending data with 'entire series' scope
+- Axis assignment locked at logic layer: `move_plot_to_axis()` returns False immediately if Compare Mode enabled
+- Multi-axis creation prevented: `_should_create_right_axis()` returns False in Compare Mode
+- Right axis properly hidden/shown when entering/exiting Compare Mode
+- Viewbox mappings correctly stored and restored when switching between modes
+- Index alignment uses original X array in Compare Mode to avoid downsampling mismatches
+- No-data guard prevents enabling Compare Mode when no data is loaded
+
 ## [1.3.0] - 2025-10-20
 
 ### Fixed

@@ -4,7 +4,7 @@ Control panel widget containing all UI controls for data loading and tag selecti
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QSpinBox,
-    QPushButton, QLabel, QGroupBox, QLineEdit, QCheckBox, QRadioButton, QButtonGroup, QHBoxLayout, QGridLayout, QToolButton
+    QPushButton, QLabel, QGroupBox, QLineEdit, QCheckBox, QRadioButton, QButtonGroup, QHBoxLayout, QGridLayout, QToolButton, QComboBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QPropertyAnimation, QSize
 from PyQt6.QtGui import QIcon
@@ -37,6 +37,14 @@ class ControlPanel(QWidget):
 
     # Signal for display mode changes
     display_mode_changed = pyqtSignal(str)  # ("tag" or "description")
+
+    # Signals for Compare Mode
+    compare_mode_changed = pyqtSignal(bool)  # (is_enabled)
+    compare_method_changed = pyqtSignal(str)  # ("robust_minmax" or "minmax")
+    compare_scope_changed = pyqtSignal(str)  # ("entire_series" or "visible_window")
+
+    # Signal for Tooltip Mode
+    tooltip_mode_changed = pyqtSignal(str)  # ("compact" or "detailed")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -245,6 +253,7 @@ class ControlPanel(QWidget):
         self.export_plot_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileDialogContentsView))
         self.export_plot_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
         self.export_plot_button.setMinimumHeight(32)
+        self.export_plot_button.setToolTip("Exports normalized view if Compare Mode is active")
         self.export_plot_button.clicked.connect(self.export_plot_clicked.emit)
         self.export_plot_button.setEnabled(False)  # Disabled until data is plotted
         buttons_layout.addWidget(self.export_plot_button, 3, 0)
@@ -253,7 +262,7 @@ class ControlPanel(QWidget):
         self.export_data_button.setIcon(style.standardIcon(style.StandardPixmap.SP_FileIcon))
         self.export_data_button.setStyleSheet(config.CONTROL_PANEL_BUTTON_STYLE)
         self.export_data_button.setMinimumHeight(32)
-        self.export_data_button.setToolTip("Export plotted tags to Excel with optional aggregation")
+        self.export_data_button.setToolTip("Export plotted tags to Excel with optional aggregation\n(Exports original values - Compare Mode does not affect data)")
         self.export_data_button.clicked.connect(self.export_data_clicked.emit)
         self.export_data_button.setEnabled(False)  # Disabled until data is plotted
         buttons_layout.addWidget(self.export_data_button, 3, 1)
@@ -286,6 +295,140 @@ class ControlPanel(QWidget):
 
         buttons_group.setLayout(buttons_layout)
         layout.addWidget(buttons_group)
+
+        # Compare Mode group
+        compare_group = QGroupBox("Compare Mode (Normalize 0-100%)")
+        compare_group.setStyleSheet(config.CONTROL_PANEL_GROUPBOX_STYLE)
+        compare_layout = QVBoxLayout()
+        compare_layout.setSpacing(8)
+
+        # Enable checkbox
+        self.compare_mode_checkbox = QCheckBox("Enable Compare Mode")
+        self.compare_mode_checkbox.setChecked(config.COMPARE_MODE_DEFAULT_ENABLED)
+        self.compare_mode_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #2C2C2C;
+                padding: 4px;
+                font-weight: bold;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #1f77b4;
+                border-color: #1f77b4;
+            }
+        """)
+        self.compare_mode_checkbox.stateChanged.connect(
+            lambda state: self._on_compare_mode_toggled(state == Qt.CheckState.Checked.value)
+        )
+        compare_layout.addWidget(self.compare_mode_checkbox)
+
+        # Method selection
+        method_layout = QHBoxLayout()
+        method_label = QLabel("Method:")
+        method_label.setStyleSheet("color: #2C2C2C;")
+        self.compare_method_combo = QComboBox()
+        self.compare_method_combo.addItem("Robust Min-Max (p5-p95)", "robust_minmax")
+        self.compare_method_combo.addItem("Min-Max", "minmax")
+        self.compare_method_combo.setCurrentIndex(0)  # Default to robust
+        self.compare_method_combo.setStyleSheet("""
+            QComboBox {
+                background-color: white;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 4px;
+                color: #2C2C2C;
+            }
+            QComboBox:focus {
+                border-color: #1f77b4;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        self.compare_method_combo.currentIndexChanged.connect(self._on_compare_method_changed)
+        method_layout.addWidget(method_label)
+        method_layout.addWidget(self.compare_method_combo, stretch=1)
+        compare_layout.addLayout(method_layout)
+
+        # Scope selection
+        scope_layout = QHBoxLayout()
+        scope_label = QLabel("Scope:")
+        scope_label.setStyleSheet("color: #2C2C2C;")
+        self.compare_scope_combo = QComboBox()
+        self.compare_scope_combo.addItem("Entire series", "entire_series")
+        self.compare_scope_combo.addItem("Visible window", "visible_window")
+        self.compare_scope_combo.setCurrentIndex(0)  # Default to entire series
+        self.compare_scope_combo.setStyleSheet("""
+            QComboBox {
+                background-color: white;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 4px;
+                color: #2C2C2C;
+            }
+            QComboBox:focus {
+                border-color: #1f77b4;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        self.compare_scope_combo.currentIndexChanged.connect(self._on_compare_scope_changed)
+        scope_layout.addWidget(scope_label)
+        scope_layout.addWidget(self.compare_scope_combo, stretch=1)
+        compare_layout.addLayout(scope_layout)
+
+        # Tooltip detail level
+        tooltip_layout = QHBoxLayout()
+        tooltip_label = QLabel("Tooltip:")
+        tooltip_label.setStyleSheet("color: #2C2C2C;")
+        self.tooltip_mode_combo = QComboBox()
+        self.tooltip_mode_combo.addItem("Compact", "compact")
+        self.tooltip_mode_combo.addItem("Detailed", "detailed")
+        self.tooltip_mode_combo.setCurrentIndex(0)  # Default to compact
+        self.tooltip_mode_combo.setStyleSheet("""
+            QComboBox {
+                background-color: white;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 4px;
+                color: #2C2C2C;
+            }
+            QComboBox:focus {
+                border-color: #1f77b4;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        self.tooltip_mode_combo.currentIndexChanged.connect(self._on_tooltip_mode_changed)
+        tooltip_layout.addWidget(tooltip_label)
+        tooltip_layout.addWidget(self.tooltip_mode_combo, stretch=1)
+        compare_layout.addLayout(tooltip_layout)
+
+        # Status label
+        self.compare_status_label = QLabel("Compare Mode: OFF")
+        self.compare_status_label.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 10px;
+                font-style: italic;
+                padding: 4px;
+            }
+        """)
+        compare_layout.addWidget(self.compare_status_label)
+
+        compare_group.setLayout(compare_layout)
+        layout.addWidget(compare_group)
+
+        # Store Y-axis lock state for restoration
+        self.y_axis_lock_stored_state = False
 
         # Tag selection group
         tags_group = QGroupBox("Select Tags to Plot")
@@ -594,3 +737,68 @@ class ControlPanel(QWidget):
             self.units_row_button.setText("Disabled")
             self.units_row_button.setStyleSheet(config.TOGGLE_BUTTON_DISABLED_STYLE)
             self.units_row_spin.setEnabled(False)
+
+    def _on_compare_mode_toggled(self, is_enabled: bool):
+        """
+        Handle compare mode checkbox toggle.
+
+        Args:
+            is_enabled: True if compare mode is being enabled
+        """
+        # Handle Y-axis lock interaction
+        if is_enabled:
+            # Store current Y-axis lock state
+            self.y_axis_lock_stored_state = self.lock_y_axis_checkbox.isChecked()
+            # Disable Y-axis lock checkbox
+            self.lock_y_axis_checkbox.setEnabled(False)
+            self.lock_y_axis_checkbox.setToolTip("Locked to 0-100% in Compare Mode")
+        else:
+            # Re-enable Y-axis lock checkbox
+            self.lock_y_axis_checkbox.setEnabled(True)
+            self.lock_y_axis_checkbox.setToolTip("Prevent accidental Y-axis zooming while inspecting data")
+            # Restore previous state
+            self.lock_y_axis_checkbox.setChecked(self.y_axis_lock_stored_state)
+
+        # Update status label
+        self._update_compare_status_label()
+
+        # Emit signal
+        self.compare_mode_changed.emit(is_enabled)
+
+    def _on_compare_method_changed(self):
+        """Handle compare method combobox change."""
+        method = self.compare_method_combo.currentData()
+        self._update_compare_status_label()
+        self.compare_method_changed.emit(method)
+
+    def _on_compare_scope_changed(self):
+        """Handle compare scope combobox change."""
+        scope = self.compare_scope_combo.currentData()
+        self._update_compare_status_label()
+        self.compare_scope_changed.emit(scope)
+
+    def _on_tooltip_mode_changed(self):
+        """Handle tooltip mode combobox change."""
+        mode = self.tooltip_mode_combo.currentData()
+        self.tooltip_mode_changed.emit(mode)
+
+    def get_tooltip_mode(self) -> str:
+        """Get current tooltip mode."""
+        return self.tooltip_mode_combo.currentData()
+
+    def set_tooltip_mode(self, mode: str):
+        """Programmatically set tooltip mode (for hotkey toggle)."""
+        index = self.tooltip_mode_combo.findData(mode)
+        if index >= 0:
+            self.tooltip_mode_combo.blockSignals(True)
+            self.tooltip_mode_combo.setCurrentIndex(index)
+            self.tooltip_mode_combo.blockSignals(False)
+
+    def _update_compare_status_label(self):
+        """Update the compare mode status label based on current settings."""
+        if not self.compare_mode_checkbox.isChecked():
+            self.compare_status_label.setText("Compare Mode: OFF")
+        else:
+            method = self.compare_method_combo.currentText().split(" ")[0]  # "Robust" or "Min-Max"
+            scope = self.compare_scope_combo.currentText()  # "Entire series" or "Visible window"
+            self.compare_status_label.setText(f"Active: {method}, {scope}")

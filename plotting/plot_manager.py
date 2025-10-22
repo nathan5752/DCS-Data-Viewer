@@ -5,10 +5,11 @@ Plot management module for handling PyQtGraph plotting with multi-axis support.
 import pyqtgraph as pg
 import pyqtgraph.exporters
 import numpy as np
+import html
 from typing import Optional, Dict, Tuple
 from datetime import datetime
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, Qt
-from PyQt6.QtWidgets import QGraphicsItem
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, Qt, QTimer
+from PyQt6.QtWidgets import QGraphicsItem, QApplication
 import config
 
 # Debug flag - set to True to see detailed group assignment logging
@@ -45,6 +46,9 @@ class PlotManager(QObject):
     # Signals for plot visibility (empty plot handling)
     first_plot_added = pyqtSignal()
     all_plots_removed = pyqtSignal()
+
+    # Signal for Compare Mode UI synchronization
+    compare_mode_ui_update_requested = pyqtSignal(bool)  # Emits True when entering, False when exiting
 
     def __init__(self, plot_widget: pg.PlotWidget, data_manager=None):
         super().__init__()  # Initialize QObject
@@ -84,6 +88,35 @@ class PlotManager(QObject):
 
         # Initialize first group with main plot (left axis)
         self.plot_groups[0] = {'plot_item': self.plot_item, 'tags': [], 'mean': None}
+
+        # Compare Mode state variables
+        self.compare_mode_enabled = config.COMPARE_MODE_DEFAULT_ENABLED
+        self.compare_method = config.COMPARE_MODE_DEFAULT_METHOD
+        self.compare_scope = config.COMPARE_MODE_DEFAULT_SCOPE
+
+        # Normalization cache: {tag_name: {'min', 'max', 'p5', 'p95', 'mean', 'std', 'computed_for', 'x_window'}}
+        self._norm_stats = {}
+
+        # Original data storage for restoration when exiting compare mode
+        self._original_data = {}  # {tag_name: {'x': array, 'y': array}}
+
+        # Store state before entering compare mode for restoration
+        self._pre_compare_state = {
+            'axis_assignments': {},  # {tag_name: 'left'|'right'}
+            'right_axis_existed': False,
+            'left_label': None,
+            'tag_viewbox': {}  # {tag_name: ViewBox}
+        }
+
+        # Tooltip settings
+        self.tooltip_mode = config.TOOLTIP_MODE_DEFAULT
+        self.tooltip_max_lines = config.TOOLTIP_MAX_LINES
+
+        # Throttled timer for visible-window recomputation (150ms)
+        self._compare_recalc_timer = QTimer()
+        self._compare_recalc_timer.setSingleShot(True)
+        self._compare_recalc_timer.setInterval(150)
+        self._compare_recalc_timer.timeout.connect(self._recompute_visible_window_norm)
 
     def _configure_plot(self):
         """Configure plot widget with proper settings."""
@@ -144,6 +177,523 @@ class PlotManager(QObject):
             else:
                 right_label = "Value (Secondary)"
             self.right_axis.setLabel(right_label)
+
+    # =========================================================================
+    # Compare Mode - Normalization Helper Methods
+    # =========================================================================
+
+    def _compute_stats_entire_series(self, tag_name: str, y_arr: np.ndarray):
+        """
+        Compute statistics for entire series and store in normalization cache.
+
+        Args:
+            tag_name: Name of the tag
+            y_arr: Array of Y values
+        """
+        # Ensure float64 for precision
+        y_arr = np.asarray(y_arr, dtype=np.float64)
+
+        # Calculate percentiles and basic stats
+        p5 = float(np.nanpercentile(y_arr, config.COMPARE_ROBUST_LO))
+        p95 = float(np.nanpercentile(y_arr, config.COMPARE_ROBUST_HI))
+        ymin = float(np.nanmin(y_arr))
+        ymax = float(np.nanmax(y_arr))
+        mean = float(np.nanmean(y_arr))
+        std = float(np.nanstd(y_arr))
+
+        self._norm_stats[tag_name] = {
+            'min': ymin,
+            'max': ymax,
+            'p5': p5,
+            'p95': p95,
+            'mean': mean,
+            'std': std,
+            'computed_for': 'entire_series',
+            'x_window': None
+        }
+
+    def _compute_stats_visible_window(self, tag_name: str, x_arr: np.ndarray, y_arr: np.ndarray, x_lo: float, x_hi: float):
+        """
+        Compute statistics for visible window only.
+
+        Args:
+            tag_name: Name of the tag
+            x_arr: Array of X values (timestamps)
+            y_arr: Array of Y values
+            x_lo: Lower X bound of visible window
+            x_hi: Upper X bound of visible window
+        """
+        # Find indices within the visible window
+        i0 = int(np.searchsorted(x_arr, x_lo, side='left'))
+        i1 = int(np.searchsorted(x_arr, x_hi, side='right'))
+
+        if i1 <= i0:
+            # Empty window, keep previous stats if any
+            return
+
+        # Get data slice for visible window
+        ys = y_arr[i0:i1]
+
+        # Ensure float64
+        ys = np.asarray(ys, dtype=np.float64)
+
+        # Calculate percentiles and stats
+        p5 = float(np.nanpercentile(ys, config.COMPARE_ROBUST_LO))
+        p95 = float(np.nanpercentile(ys, config.COMPARE_ROBUST_HI))
+        ymin = float(np.nanmin(ys))
+        ymax = float(np.nanmax(ys))
+        mean = float(np.nanmean(ys))
+        std = float(np.nanstd(ys))
+
+        self._norm_stats[tag_name] = {
+            'min': ymin,
+            'max': ymax,
+            'p5': p5,
+            'p95': p95,
+            'mean': mean,
+            'std': std,
+            'computed_for': 'visible_window',
+            'x_window': (x_lo, x_hi)
+        }
+
+    def _is_flat_series(self, stats: dict) -> bool:
+        """
+        Check if a series is effectively flat (constant value).
+
+        Args:
+            stats: Statistics dictionary for a tag
+
+        Returns:
+            True if series is flat, False otherwise
+        """
+        if not stats:
+            return False
+
+        # Check if range is effectively zero
+        span = stats['max'] - stats['min']
+        robust_span = stats['p95'] - stats['p5']
+
+        return (not np.isfinite(span) or
+                span < config.COMPARE_FLAT_THRESHOLD or
+                robust_span < config.COMPARE_FLAT_THRESHOLD)
+
+    def _normalize(self, tag_name: str, y_arr: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Normalize an array to 0-100% based on cached statistics.
+
+        Args:
+            tag_name: Name of the tag
+            y_arr: Array of Y values to normalize
+
+        Returns:
+            Normalized array [0, 100] or None if stats not available
+        """
+        stats = self._norm_stats.get(tag_name)
+        if not stats:
+            return None
+
+        # Ensure float64
+        y_arr = np.asarray(y_arr, dtype=np.float64)
+
+        # Check for flat series - return 50% line
+        if self._is_flat_series(stats):
+            return np.full_like(y_arr, 50.0, dtype=np.float64)
+
+        # Select normalization range based on method
+        if self.compare_method == 'robust_minmax':
+            lo, hi = stats['p5'], stats['p95']
+        else:  # 'minmax'
+            lo, hi = stats['min'], stats['max']
+
+        # Calculate span
+        span = hi - lo
+
+        # Safety check for flat series (shouldn't happen due to earlier check)
+        if not np.isfinite(span) or span < config.COMPARE_FLAT_THRESHOLD:
+            return np.full_like(y_arr, 50.0, dtype=np.float64)
+
+        # Normalize to 0-100
+        yn = (y_arr - lo) * 100.0 / span
+
+        # Clip to [0, 100] to handle outliers
+        yn = np.clip(yn, 0.0, 100.0)
+
+        return yn
+
+    def _normalize_point(self, tag_name: str, y_val: float) -> Optional[float]:
+        """
+        Normalize a single point to 0-100% based on cached statistics.
+
+        Args:
+            tag_name: Name of the tag
+            y_val: Single Y value to normalize
+
+        Returns:
+            Normalized value [0, 100] or None if stats not available
+        """
+        stats = self._norm_stats.get(tag_name)
+        if not stats:
+            return None
+
+        # Check for flat series
+        if self._is_flat_series(stats):
+            return 50.0
+
+        # Select normalization range based on method
+        if self.compare_method == 'robust_minmax':
+            lo, hi = stats['p5'], stats['p95']
+        else:  # 'minmax'
+            lo, hi = stats['min'], stats['max']
+
+        # Calculate span
+        span = hi - lo
+
+        # Safety check
+        if not np.isfinite(span) or span < config.COMPARE_FLAT_THRESHOLD:
+            return 50.0
+
+        # Normalize to 0-100
+        yn = (y_val - lo) * 100.0 / span
+
+        # Clip to [0, 100]
+        yn = np.clip(yn, 0.0, 100.0)
+
+        return yn
+
+    # =========================================================================
+    # Compare Mode - Enter/Exit and State Management
+    # =========================================================================
+
+    def _enter_compare_mode(self):
+        """Enter compare mode: store state, normalize all plots, lock Y-axis."""
+        # 1. Store current state for restoration
+        self._pre_compare_state['axis_assignments'] = {}
+        for tag, info in self.plot_items.items():
+            self._pre_compare_state['axis_assignments'][tag] = info['axis']
+
+        self._pre_compare_state['right_axis_existed'] = self.right_viewbox is not None
+        self._pre_compare_state['left_label'] = self.custom_left_label or self._get_current_left_label()
+
+        # 2. Store original data for ALL plotted tags
+        for tag, info in self.plot_items.items():
+            x_data, y_data = info['plot_item'].getData()
+            if x_data is not None and y_data is not None:
+                self._original_data[tag] = {
+                    'x': np.copy(x_data),
+                    'y': np.copy(y_data)
+                }
+
+        # 3. Hide right axis and unify all plots on left axis
+        if self.right_viewbox is not None:
+            # Store which viewbox each tag was on before compare mode
+            self._pre_compare_state['tag_viewbox'] = {}
+            left_vb = self.plot_item.getViewBox()
+
+            # Find all tags plotted on right viewbox and move them to left
+            for tag, info in self.plot_items.items():
+                current_vb = info.get('viewbox')
+                self._pre_compare_state['tag_viewbox'][tag] = current_vb
+
+                if current_vb is self.right_viewbox:
+                    plot_data_item = info['plot_item']
+                    # Remove from right viewbox
+                    try:
+                        self.right_viewbox.removeItem(plot_data_item)
+                    except Exception:
+                        pass  # Already removed or not present
+                    # Add to left viewbox
+                    left_vb.addItem(plot_data_item)
+                    # Update internal tracking
+                    info['viewbox'] = left_vb
+
+            # Hide the right axis widget
+            if self.right_axis:
+                self.right_axis.hide()
+
+        # 4. Compute stats and normalize all visible tags
+        for tag, info in self.plot_items.items():
+            if tag in self._original_data:
+                y_data = self._original_data[tag]['y']
+                x_data = self._original_data[tag]['x']
+
+                # Compute stats based on scope
+                if self.compare_scope == 'entire_series':
+                    self._compute_stats_entire_series(tag, y_data)
+                else:  # visible_window
+                    vb = self.plot_item.getViewBox()
+                    x_range = vb.viewRange()[0]
+                    self._compute_stats_visible_window(tag, x_data, y_data, x_range[0], x_range[1])
+
+                # Normalize and update plot
+                yn = self._normalize(tag, y_data)
+                if yn is not None:
+                    info['plot_item'].setData(x_data, yn)
+
+        # 5. Lock Y-axis to [0, 100]
+        vb = self.plot_item.getViewBox()
+        vb.enableAutoRange(axis=vb.YAxis, enable=False)
+        vb.setYRange(config.COMPARE_Y_MIN, config.COMPARE_Y_MAX, padding=0.0)
+        vb.setMouseEnabled(x=True, y=False)  # Block Y-axis zoom/pan
+
+        # Also lock right viewbox if it exists
+        if self.right_viewbox:
+            self.right_viewbox.enableAutoRange(axis=self.right_viewbox.YAxis, enable=False)
+            self.right_viewbox.setYRange(config.COMPARE_Y_MIN, config.COMPARE_Y_MAX, padding=0.0)
+            self.right_viewbox.setMouseEnabled(x=True, y=False)
+
+        # 6. Update left axis label to "Normalized (%)"
+        self.plot_item.setLabel('left', 'Normalized (%)')
+
+        # 7. Wire X-range signal if scope is visible_window
+        if self.compare_scope == 'visible_window':
+            try:
+                self.plot_item.getViewBox().sigXRangeChanged.connect(self._on_x_range_changed)
+            except:
+                pass  # Already connected
+
+        # 8. Emit signal for UI to update (disable axis buttons, etc.)
+        self.compare_mode_ui_update_requested.emit(True)
+
+    def _exit_compare_mode(self):
+        """Exit compare mode: restore original data, axes, and interactivity."""
+        # 1. Unwire X-range signal
+        try:
+            self.plot_item.getViewBox().sigXRangeChanged.disconnect(self._on_x_range_changed)
+        except:
+            pass  # Not connected or already disconnected
+
+        # 2. Restore original data for all plotted tags
+        for tag, info in self.plot_items.items():
+            if tag in self._original_data:
+                x_data = self._original_data[tag]['x']
+                y_data = self._original_data[tag]['y']
+                info['plot_item'].setData(x_data, y_data)
+
+        # 3. Restore Y-axis interactivity
+        vb = self.plot_item.getViewBox()
+        vb.setMouseEnabled(x=True, y=True)  # Restore Y-axis zoom/pan
+        vb.enableAutoRange(axis=vb.YAxis, enable=True)
+
+        if self.right_viewbox:
+            self.right_viewbox.setMouseEnabled(x=True, y=True)
+            self.right_viewbox.enableAutoRange(axis=self.right_viewbox.YAxis, enable=True)
+
+        # 4. Auto-range to fit data
+        vb.autoRange()
+
+        # 5. Restore left axis label
+        if self._pre_compare_state['left_label'] and self._pre_compare_state['left_label'] != 'Value (Primary)':
+            # Had a custom label, restore it
+            self.plot_item.setLabel('left', self._pre_compare_state['left_label'])
+        else:
+            # Restore auto-generated label based on units
+            self._update_axis_labels()
+
+        # 5a. Restore right axis visibility and move plots back to original viewboxes
+        if self._pre_compare_state.get('right_axis_existed') and self.right_axis:
+            # Show the right axis
+            self.right_axis.show()
+
+            # Move plots back to their original viewboxes
+            tag_viewbox_map = self._pre_compare_state.get('tag_viewbox', {})
+            left_vb = self.plot_item.getViewBox()
+
+            for tag, target_vb in tag_viewbox_map.items():
+                if tag in self.plot_items and target_vb is not None:
+                    info = self.plot_items[tag]
+                    current_vb = info.get('viewbox')
+                    plot_data_item = info['plot_item']
+
+                    # If tag should be on right viewbox but is currently on left, move it back
+                    if target_vb is self.right_viewbox and current_vb is not self.right_viewbox:
+                        # Remove from left
+                        try:
+                            left_vb.removeItem(plot_data_item)
+                        except Exception:
+                            pass
+                        # Add to right
+                        self.right_viewbox.addItem(plot_data_item)
+                        # Update tracking
+                        info['viewbox'] = self.right_viewbox
+
+        # 6. Restore right axis if it existed before and plots need it
+        # (The right axis state is preserved by the existing multi-axis logic)
+
+        # 7. Clear caches
+        self._norm_stats.clear()
+        self._original_data.clear()
+        self._pre_compare_state = {
+            'axis_assignments': {},
+            'right_axis_existed': False,
+            'left_label': None,
+            'tag_viewbox': {}
+        }
+
+        # 8. Emit signal for UI to update (re-enable axis buttons, etc.)
+        self.compare_mode_ui_update_requested.emit(False)
+
+    def _on_x_range_changed(self, viewbox, x_range):
+        """
+        Handle X-range changes for visible window normalization.
+        Throttled to avoid excessive recomputation.
+
+        Args:
+            viewbox: The ViewBox that changed
+            x_range: The new X range (not used, we query it when timer fires)
+        """
+        if not self.compare_mode_enabled or self.compare_scope != 'visible_window':
+            return
+
+        # Trigger throttled recompute (restarts timer if already running)
+        self._compare_recalc_timer.start()
+
+    def _recompute_visible_window_norm(self):
+        """
+        Recompute normalization for all visible tags based on current X-range.
+        Called by throttled timer after pan/zoom settles.
+        """
+        if not self.compare_mode_enabled or self.compare_scope != 'visible_window':
+            return
+
+        # Get current visible X range
+        vb = self.plot_item.getViewBox()
+        x_lo, x_hi = vb.viewRange()[0]
+
+        # Recompute stats and normalize for each plotted tag
+        for tag, info in self.plot_items.items():
+            if tag in self._original_data:
+                x_data = self._original_data[tag]['x']
+                y_data = self._original_data[tag]['y']
+
+                # Compute stats for visible window
+                self._compute_stats_visible_window(tag, x_data, y_data, x_lo, x_hi)
+
+                # Normalize and update plot
+                yn = self._normalize(tag, y_data)
+                if yn is not None:
+                    info['plot_item'].setData(x_data, yn)
+
+    def _recalculate_all_stats_and_redraw(self):
+        """
+        Recalculate normalization stats for all plotted tags and redraw.
+        Used after data append in entire_series scope.
+        """
+        if not self.compare_mode_enabled:
+            return
+
+        for tag, info in self.plot_items.items():
+            if tag in self._original_data:
+                x_data = self._original_data[tag]['x']
+                y_data = self._original_data[tag]['y']
+
+                # Recompute stats based on current scope
+                if self.compare_scope == 'entire_series':
+                    self._compute_stats_entire_series(tag, y_data)
+                else:  # visible_window
+                    vb = self.plot_item.getViewBox()
+                    x_range = vb.viewRange()[0]
+                    self._compute_stats_visible_window(tag, x_data, y_data, x_range[0], x_range[1])
+
+                # Normalize and update plot
+                yn = self._normalize(tag, y_data)
+                if yn is not None:
+                    info['plot_item'].setData(x_data, yn)
+
+    # =========================================================================
+    # Compare Mode - Public API
+    # =========================================================================
+
+    def set_compare_mode(self, enabled: bool):
+        """
+        Enable or disable compare mode.
+
+        Args:
+            enabled: True to enable compare mode, False to disable
+        """
+        if self.compare_mode_enabled == enabled:
+            return  # No change
+
+        self.compare_mode_enabled = enabled
+
+        if enabled:
+            self._enter_compare_mode()
+        else:
+            self._exit_compare_mode()
+
+    def set_compare_method(self, method: str):
+        """
+        Set the normalization method.
+
+        Args:
+            method: 'robust_minmax' or 'minmax'
+        """
+        if method not in ['robust_minmax', 'minmax']:
+            print(f"Warning: Invalid compare method '{method}', ignoring")
+            return
+
+        self.compare_method = method
+
+        # If currently in compare mode, recalculate and redraw
+        if self.compare_mode_enabled:
+            self._recalculate_all_stats_and_redraw()
+
+    def set_compare_scope(self, scope: str):
+        """
+        Set the normalization scope.
+
+        Args:
+            scope: 'entire_series' or 'visible_window'
+        """
+        if scope not in ['entire_series', 'visible_window']:
+            print(f"Warning: Invalid compare scope '{scope}', ignoring")
+            return
+
+        old_scope = self.compare_scope
+        self.compare_scope = scope
+
+        # If currently in compare mode, handle scope change
+        if self.compare_mode_enabled:
+            # Disconnect old signal if switching from visible_window
+            if old_scope == 'visible_window':
+                try:
+                    self.plot_item.getViewBox().sigXRangeChanged.disconnect(self._on_x_range_changed)
+                except:
+                    pass
+
+            # Recalculate with new scope
+            self._recalculate_all_stats_and_redraw()
+
+            # Connect new signal if switching to visible_window
+            if scope == 'visible_window':
+                try:
+                    self.plot_item.getViewBox().sigXRangeChanged.connect(self._on_x_range_changed)
+                except:
+                    pass  # Already connected
+
+    def get_compare_mode_status(self) -> str:
+        """
+        Get a status string describing the current compare mode settings.
+
+        Returns:
+            Status string for display in UI
+        """
+        if not self.compare_mode_enabled:
+            return "Compare Mode: OFF"
+
+        method_str = "Robust (p5-p95)" if self.compare_method == 'robust_minmax' else "Min-Max"
+        scope_str = "Entire series" if self.compare_scope == 'entire_series' else "Visible window"
+
+        return f"Compare Mode: {method_str}, {scope_str}"
+
+    def set_tooltip_mode(self, mode: str):
+        """
+        Set tooltip detail level ('compact' or 'detailed').
+
+        Args:
+            mode: Tooltip mode - 'compact' or 'detailed'
+        """
+        if mode in ['compact', 'detailed']:
+            self.tooltip_mode = mode
 
     def _init_crosshair_for_plot(self, plot_item: pg.PlotItem):
         """
@@ -210,12 +760,77 @@ class PlotManager(QObject):
             self.crosshair_lines[source_item]['h'].setPos(y_pos)
 
         # Update tooltip with timestamp and values
-        self._update_tooltip(x_pos, y_pos, source_item)
+        # Check if Alt is held for temporary detailed mode
+        alt_held = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.AltModifier)
+        self._update_tooltip(x_pos, y_pos, source_item, alt_override=alt_held)
 
         # Highlight nearest plot line
         self._highlight_nearest_line(x_pos, source_item)
 
-    def _update_tooltip(self, x_pos: float, y_pos: float, source_item: pg.PlotItem):
+    # =========================================================================
+    # Tooltip Formatting Helpers
+    # =========================================================================
+
+    def _format_value(self, x: float) -> str:
+        """
+        Format value with 3 significant figures, strip trailing zeros.
+
+        Args:
+            x: Value to format
+
+        Returns:
+            Formatted string
+        """
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        ax = abs(x)
+        # Use 3 sig figs; avoid noisy scientific notation for mid-range
+        if ax == 0:
+            return "0"
+        if (ax != 0 and ax < 0.01) or ax >= 1000:
+            return f"{x:.3g}"
+        s = f"{x:.3f}"
+        return s.rstrip('0').rstrip('.')
+
+    def _format_percent(self, p: float) -> str:
+        """
+        Format percentage as integer with % symbol.
+
+        Args:
+            p: Percentage value (0-100)
+
+        Returns:
+            Formatted string
+        """
+        if p is None or (isinstance(p, float) and np.isnan(p)):
+            return "—"
+        return f"{p:.0f}%"
+
+    def _get_series_color_hex(self, tag_name: str) -> str:
+        """
+        Get hex color for a tag from its plot item's pen.
+
+        Args:
+            tag_name: Name of the tag
+
+        Returns:
+            Hex color string (e.g., "#1f77b4")
+        """
+        if tag_name in self.plot_items:
+            plot_item = self.plot_items[tag_name]['plot_item']
+            pen = plot_item.opts.get('pen')
+            if pen:
+                try:
+                    qcolor = pen.color()
+                    return qcolor.name()
+                except:
+                    pass
+            # Fallback to internal color dict
+            color = self.plot_items[tag_name]['color']
+            return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+        return "#FFFFFF"
+
+    def _update_tooltip(self, x_pos: float, y_pos: float, source_item: pg.PlotItem, alt_override: bool = False):
         """
         Update tooltip content with timestamp and tag values.
 
@@ -223,9 +838,13 @@ class PlotManager(QObject):
             x_pos: X position (timestamp)
             y_pos: Y position
             source_item: The PlotItem where mouse is located
+            alt_override: If True, temporarily show detailed mode regardless of tooltip_mode
         """
         if not self.tooltip:
             return
+
+        # Determine effective tooltip mode
+        effective_mode = "detailed" if alt_override else self.tooltip_mode
 
         # Format timestamp
         try:
@@ -233,30 +852,91 @@ class PlotManager(QObject):
         except (ValueError, OSError):
             timestamp_str = "Invalid time"
 
-        # Build tooltip HTML
-        tooltip_html = "<div style='background-color: rgba(0,0,0,0.7); color: white; padding: 5px; border-radius: 3px;'>"
-        tooltip_html += f"<b>{timestamp_str}</b><br>"
+        # Build tooltip lines with (line_html, y_distance) for sorting
+        tooltip_lines = []
 
-        # Add values for each plotted tag (find nearest point)
         for tag_name, plot_info in self.plot_items.items():
             plot_data_item = plot_info['plot_item']
             data = plot_data_item.getData()
 
-            if data[0] is not None and len(data[0]) > 0:
-                x_data, y_data = data
-                # Find nearest X point
+            if data[0] is None or len(data[0]) == 0:
+                continue
+
+            x_data, y_data = data
+
+            # Get unit
+            unit = self.data_manager.get_unit_for_tag(tag_name) if self.data_manager else ''
+
+            # Get color from pen
+            color_hex = self._get_series_color_hex(tag_name)
+            chip = f'<span style="color:{color_hex};">■</span> '
+
+            # HTML-escape tag name
+            safe_tag_name = html.escape(tag_name)
+
+            # Build line based on mode
+            if self.compare_mode_enabled and tag_name in self._original_data:
+                # Compare mode: use original X array for index alignment
+                original_x = self._original_data[tag_name]['x']
+                original_y = self._original_data[tag_name]['y']
+
+                # Find nearest point in ORIGINAL data
+                idx = np.abs(original_x - x_pos).argmin()
+
+                if idx < len(original_y):
+                    original_value = original_y[idx]
+
+                    # Get displayed (normalized) value
+                    idx_displayed = np.abs(x_data - x_pos).argmin()
+                    displayed_value = y_data[idx_displayed]
+
+                    # Get stats
+                    stats = self._norm_stats.get(tag_name)
+
+                    # Compact: Tag • value unit • percent
+                    line = f"{chip}{safe_tag_name}: {self._format_value(original_value)} {unit} • {self._format_percent(displayed_value)}"
+
+                    # Detailed: add normalization range
+                    if effective_mode == "detailed" and stats:
+                        if self._is_flat_series(stats):
+                            line += " (flat)"
+                        else:
+                            scope = "series" if self.compare_scope == "entire_series" else "window"
+                            if self.compare_method == "robust_minmax":
+                                lo, hi = stats['p5'], stats['p95']
+                                line += f" ({scope} robust p5\u2013p95: {self._format_value(lo)}\u2013{self._format_value(hi)} {unit})"
+                            else:
+                                lo, hi = stats['min'], stats['max']
+                                line += f" ({scope} min\u2013max: {self._format_value(lo)}\u2013{self._format_value(hi)} {unit})"
+
+                    # Calculate Y distance for sorting
+                    y_distance = abs(original_value - y_pos)
+                    tooltip_lines.append((line, y_distance))
+            else:
+                # Normal mode: simple value
                 idx = np.abs(x_data - x_pos).argmin()
-                value = y_data[idx]
+                displayed_value = y_data[idx]
 
-                # Get unit if available
-                unit = self.data_manager.get_unit_for_tag(tag_name) if self.data_manager else 'N/A'
+                line = f"{chip}{safe_tag_name}: {self._format_value(displayed_value)} {unit}"
 
-                # Color code by plot color
-                color = plot_info['color']
-                color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+                # Calculate Y distance for sorting
+                y_distance = abs(displayed_value - y_pos)
+                tooltip_lines.append((line, y_distance))
 
-                tooltip_html += f"<span style='color: {color_hex};'>■</span> {tag_name}: {value:.2f} {unit}<br>"
+        # Sort by Y proximity
+        tooltip_lines.sort(key=lambda x: x[1])
 
+        # Apply line limit
+        lines_html = [line for line, _ in tooltip_lines]
+        if len(lines_html) > self.tooltip_max_lines:
+            extra = len(lines_html) - self.tooltip_max_lines
+            lines_html = lines_html[:self.tooltip_max_lines]
+            lines_html.append(f"<i>… +{extra} more</i>")
+
+        # Build final HTML with improved styling
+        tooltip_html = "<div style='background-color: rgba(0,0,0,0.75); color: #eee; padding: 6px 8px; border-radius: 6px; font-size: 11px; line-height: 1.3;'>"
+        tooltip_html += f"<b>{timestamp_str}</b><br>"
+        tooltip_html += "<br>".join(lines_html)
         tooltip_html += "</div>"
 
         # Position and update tooltip
@@ -418,6 +1098,10 @@ class PlotManager(QObject):
         Returns:
             True if a new axis should be created
         """
+        # GUARD: Never create right axis in compare mode
+        if self.compare_mode_enabled:
+            return False
+
         # If no data on left axis yet, use left axis
         if self.left_axis_data_mean is None:
             return False
@@ -493,6 +1177,64 @@ class PlotManager(QObject):
             x_data = timestamps.values.astype(np.int64) // 10**9
             y_data = values.to_numpy(dtype=float)
 
+            # ===== COMPARE MODE: Simplified single-axis plotting =====
+            if self.compare_mode_enabled:
+                # Store original data
+                self._original_data[tag_name] = {
+                    'x': np.copy(x_data),
+                    'y': np.copy(y_data)
+                }
+
+                # Compute stats based on scope
+                if self.compare_scope == 'entire_series':
+                    self._compute_stats_entire_series(tag_name, y_data)
+                else:  # visible_window
+                    vb = self.plot_item.getViewBox()
+                    x_range = vb.viewRange()[0]
+                    self._compute_stats_visible_window(tag_name, x_data, y_data, x_range[0], x_range[1])
+
+                # Normalize data
+                yn = self._normalize(tag_name, y_data)
+                if yn is None:
+                    yn = y_data  # Fallback if normalization fails
+
+                # Get color and create plot
+                color = self._get_next_color()
+                pen = pg.mkPen(color=color, width=config.PLOT_LINE_WIDTH)
+
+                plot_data_item = pg.PlotDataItem(
+                    x=x_data,
+                    y=yn,  # Use normalized data
+                    pen=pen,
+                    name=tag_name
+                )
+                plot_data_item.setDownsampling(auto=True, method=config.DOWNSAMPLE_MODE)
+
+                # Add to left axis only
+                self.plot_item.addItem(plot_data_item)
+
+                # Store plot information
+                self.plot_items[tag_name] = {
+                    'plot_item': plot_data_item,
+                    'axis': 'left',  # All plots on left axis in compare mode
+                    'viewbox': self.plot_item.getViewBox(),
+                    'color': color,
+                    'group_id': 0
+                }
+
+                # Add to group 0
+                if tag_name not in self.plot_groups[0]['tags']:
+                    self.plot_groups[0]['tags'].append(tag_name)
+                    self.tag_to_group[tag_name] = 0
+
+                # Increment active plot count and emit signal if it's the first one
+                self.active_plot_count += 1
+                if self.active_plot_count == 1:
+                    self.first_plot_added.emit()
+
+                return True  # Success
+
+            # ===== NORMAL MODE: Multi-axis group-based plotting =====
             # Calculate mean for group assignment
             new_mean = np.nanmean(np.abs(y_data))
 
@@ -780,6 +1522,10 @@ class PlotManager(QObject):
         Returns:
             True if successful, False otherwise
         """
+        # GUARD: No axis changes allowed in compare mode
+        if self.compare_mode_enabled:
+            return False
+
         # Validate inputs
         if tag_name not in self.plot_items:
             print(f"Error: Tag {tag_name} is not currently plotted")

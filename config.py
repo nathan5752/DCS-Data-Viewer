@@ -4,7 +4,7 @@ Configuration and constants for the DCS Data Viewer application.
 
 # Application metadata
 APP_NAME = "DCS Data Viewer"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # Default row numbers for Excel parsing
 DEFAULT_TAG_ROW = 1
@@ -235,3 +235,18 @@ CLEANED_FILE_SUFFIX = "_cleaned"  # Suffix for cleaned Excel files
 SEVERITY_ERROR_COLOR = "#d32f2f"    # Red for errors
 SEVERITY_WARNING_COLOR = "#f57c00"  # Orange for warnings
 SEVERITY_INFO_COLOR = "#1976d2"     # Blue for information
+
+# Compare Mode configuration
+COMPARE_MODE_DEFAULT_ENABLED = False
+COMPARE_MODE_DEFAULT_METHOD = "robust_minmax"  # options: 'robust_minmax', 'minmax'
+COMPARE_MODE_DEFAULT_SCOPE = "entire_series"   # options: 'entire_series', 'visible_window'
+COMPARE_ROBUST_LO = 5.0  # lower percentile for robust normalization
+COMPARE_ROBUST_HI = 95.0 # upper percentile for robust normalization
+COMPARE_TOOLTIP_SHOW_ORIGINAL = True  # Show original values in tooltips
+COMPARE_Y_MIN = 0.0  # Y-axis minimum in compare mode
+COMPARE_Y_MAX = 100.0  # Y-axis maximum in compare mode
+COMPARE_FLAT_THRESHOLD = 1e-10  # Consider series flat if span < this value
+
+# Tooltip settings
+TOOLTIP_MODE_DEFAULT = "compact"  # "compact" | "detailed"
+TOOLTIP_MAX_LINES = 6  # Maximum number of series to show in tooltip before "+N more"
